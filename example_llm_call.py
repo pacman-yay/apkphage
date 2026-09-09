@@ -1,5 +1,35 @@
 import os
+import sys
+import threading
 import time
+from contextlib import contextmanager
+
+_SPIN = "|/-\\"
+
+
+@contextmanager
+def _spinner(label: str):
+    """Rotating in-place loader shown while the LLM call blocks.
+
+    LLM API calls routinely take 10-60s; without this the terminal sits
+    frozen on the last [*] line. The spinner proves the call is alive."""
+    stop = threading.Event()
+
+    def _animate():
+        i = 0
+        while not stop.wait(0.5):
+            i += 1
+            sys.stdout.write(f"\r  {label} {_SPIN[i % 4]}  ")
+            sys.stdout.flush()
+        sys.stdout.write("\r" + " " * 40 + "\r")
+        sys.stdout.flush()
+
+    t = threading.Thread(target=_animate, daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        stop.set()
 
 
 def call_llm(prompt: str, retries: int = 3, backoff: float = 5.0) -> str:
@@ -13,25 +43,26 @@ def call_llm(prompt: str, retries: int = 3, backoff: float = 5.0) -> str:
 
     for attempt in range(retries):
         try:
-            if provider == "groq":
-                from groq import Groq
+            with _spinner("calling LLM"):
+                if provider == "groq":
+                    from groq import Groq
 
-                client = Groq()
-                response = client.chat.completions.create(
-                    model="llama3-70b-8192",
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                )
-                return response.choices[0].message.content
-            else:
-                from google import genai
+                    client = Groq()
+                    response = client.chat.completions.create(
+                        model="llama3-70b-8192",
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=0.2,
+                    )
+                    return response.choices[0].message.content
+                else:
+                    from google import genai
 
-                client = genai.Client()
-                response = client.models.generate_content(
-                    model="gemini-3.5-flash",
-                    contents=prompt,
-                )
-                return response.text
+                    client = genai.Client()
+                    response = client.models.generate_content(
+                        model="gemini-3.5-flash",
+                        contents=prompt,
+                    )
+                    return response.text
         except Exception as e:
             last_err = e
             err_str = str(e).lower()

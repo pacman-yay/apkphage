@@ -1,7 +1,11 @@
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
+import time
+from contextlib import contextmanager
 
 from ai_agent import build_agent_calls
 from entropy_scanner import scan_assets
@@ -11,18 +15,98 @@ from report_template import build_report, write_report
 SAMPLES_DIR = "/app/samples"
 WORK_DIR = "/app/work"
 
+# Rotating loader characters - visible "motion" so long phases never
+# look frozen. Mirrors dynamic_runner's loader so output feels consistent.
+_SPIN = "|/-\\"
+_HEARTBEAT_EVERY = 10  # seconds between heartbeat lines while idle
+
+
+class _LoaderThread(threading.Thread):
+    """Animated in-place spinner proving a CPU-bound phase is alive."""
+
+    def __init__(self, label: str):
+        super().__init__(daemon=True)
+        self.label = label
+        self._stop = threading.Event()
+
+    def stop(self):
+        self._stop.set()
+
+    def run(self):
+        i = 0
+        while not self._stop.wait(0.5):
+            i += 1
+            sys.stdout.write(f"\r[*] {self.label}... {_SPIN[i % 4]} ")
+            sys.stdout.flush()
+        # Clear the spinner line so the next [*] output starts clean.
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+
+@contextmanager
+def _loading(label: str):
+    """Show a rotating loader while the wrapped (non-subprocess) work runs."""
+    t = _LoaderThread(label)
+    t.start()
+    try:
+        yield
+    finally:
+        t.stop()
+
+
+def _run_streamed(args: list, label: str, status_fn=None) -> str:
+    """Run a command streaming its output live, with heartbeat ticks while idle.
+
+    Proves apktool / jadx are alive even when they emit nothing for a while
+    (both can go quiet mid-file). Real output prints as-is; gaps fill with a
+    rotating heartbeat. Uses a reader thread so it is portable (Windows host
+    and Linux container alike)."""
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    q = queue.Queue()
+
+    def _reader():
+        for line in iter(proc.stdout.readline, ""):
+            q.put(line)
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    start = time.time()
+    last_beat = start
+    out_lines = []
+    while proc.poll() is None:
+        try:
+            line = q.get(timeout=1)
+            out_lines.append(line)
+            sys.stdout.write(line)
+            sys.stdout.flush()
+            last_beat = time.time()  # real output is a heartbeat too
+        except queue.Empty:
+            if time.time() - last_beat >= _HEARTBEAT_EVERY:
+                elapsed = int(time.time() - start)
+                char = _SPIN[elapsed % len(_SPIN)]
+                status = f" | {status_fn()}" if status_fn else ""
+                print(f"\r[*] {label}... ({elapsed}s) {char}{status}   ", flush=True)
+                last_beat = time.time()
+    # Drain any trailing output
+    while not q.empty():
+        out_lines.append(q.get_nowait())
+    return "".join(out_lines)
+
 
 def run_apktool(apk_path: str, out_dir: str):
-    subprocess.run(
+    _run_streamed(
         ["apktool", "d", apk_path, "-o", out_dir, "-f"],
-        check=True,
+        "Running apktool (decoding resources)",
     )
 
 
 def run_jadx(apk_path: str, out_dir: str):
     # non-zero exit on the encrypted-asset noise is expected - don't
     # treat it as fatal, same as we saw manually
-    subprocess.run(["jadx", "-d", out_dir, apk_path])
+    _run_streamed(
+        ["jadx", "-d", out_dir, apk_path],
+        "Running jadx (decompiling classes)",
+    )
 
 
 def analyze_sample(apk_path: str):
@@ -44,12 +128,14 @@ def analyze_sample(apk_path: str):
 
     assets_dir = os.path.join(apktool_out, "assets")
     print("[+] Scanning assets for high-entropy (likely encrypted) files...")
-    entropy_findings = scan_assets(assets_dir) if os.path.isdir(assets_dir) else []
+    with _loading("Scanning assets"):
+        entropy_findings = scan_assets(assets_dir) if os.path.isdir(assets_dir) else []
+    print(f"[+] {len(entropy_findings)} high-entropy asset(s) flagged.")
 
     sources_dir = os.path.join(jadx_out, "sources")
     print("[+] Triaging decompiled source for suspicious patterns...")
-    per_file_calls = build_agent_calls(sources_dir)
-
+    with _loading("Triaging decompiled source"):
+        per_file_calls = build_agent_calls(sources_dir)
     print(f"[+] {len(per_file_calls)} files flagged for AI review.")
 
     # Timer: the container runs --network none, so it can never reach an LLM
