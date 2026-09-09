@@ -259,6 +259,9 @@ def install_apk(apk_path: str):
         raise RuntimeError("Package manager never became responsive after boot")
 
     last_err = None
+    # Software emulation + big APKs can crash system_server (the package
+    # service host) mid-install. Each retry first waits for the service to
+    # come back - a fixed sleep is too short for the 30-60s restart window.
     for attempt in range(1, 4):
         print(f"[+] Installing APK (attempt {attempt}/3)...", flush=True)
         res = _run_with_liveness(
@@ -276,7 +279,11 @@ def install_apk(apk_path: str):
             return
         last_err = (res.returncode, res.stderr)
         print(f"[-] install attempt {attempt}/3 failed ({res.returncode}); retrying...", flush=True)
-        time.sleep(8)
+        # 'Can't find service: package' / 'Broken pipe' => system_server is
+        # restarting. Reboot-wait (graceful, up to 180s) before the retry.
+        if not _wait_package_manager():
+            print("[-] package manager did not come back after failure; aborting.", file=sys.stderr)
+            break
     raise (
         subprocess.CalledProcessError(*last_err) if last_err else RuntimeError("APK install failed")
     )
