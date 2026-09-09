@@ -93,7 +93,7 @@ def _wait_booted(timeout: float) -> bool:
 
 def _dex2oat_running() -> bool:
     """True when the guest is AOT-compiling (the normal post-install slow phase)."""
-    res = _adb("shell", "ps -A | grep dex2oat", timeout=15)
+    res = _adb("shell", "ps -A | grep dex2oat", timeout=5)
     return res.returncode == 0 and "dex2oat" in res.stdout
 
 
@@ -131,7 +131,16 @@ def _run_with_liveness(
             if time.time() - last_beat >= every:
                 elapsed = int(time.time() - start)
                 char = _SPIN[elapsed % len(_SPIN)]
-                status = status_fn() if status_fn else ""
+                status = ""
+                if status_fn:
+                    try:
+                        status = status_fn()
+                    except Exception:
+                        # The status probe is purely cosmetic - it must never
+                        # be able to kill a running command. A probe that times
+                        # out (adb briefly unresponsive under software emulation)
+                        # degrades to "checking guest" instead of failing.
+                        status = "checking guest..."
                 h = f" | {hint}" if hint else ""
                 s = f" | {status}" if status else ""
                 print(f"[*] still working... ({elapsed}s) {char}{h}{s}", flush=True)
