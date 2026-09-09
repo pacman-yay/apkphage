@@ -99,7 +99,7 @@ def print_banner():
     provider = os.environ.get("LLM_PROVIDER", "")
     gemini_key = bool(os.environ.get("GEMINI_API_KEY"))
     groq_key = bool(os.environ.get("GROQ_API_KEY"))
-    if provider == "groq" and groq_key:
+    if provider == "groq" or groq_key:
         ai_status = "[green]Groq configured[/green]"
     elif provider == "gemini" or gemini_key:
         ai_status = (
@@ -107,8 +107,6 @@ def print_banner():
             if gemini_key
             else "[yellow]Gemini key missing[/yellow]"
         )
-    elif groq_key:
-        ai_status = "[green]Groq configured[/green]"
     else:
         ai_status = "[yellow]No AI key[/yellow]"
 
@@ -152,7 +150,7 @@ def get_or_prompt_api_key():
     provider = os.environ.get("LLM_PROVIDER")
     if not provider:
         provider = questionary.select(
-            "Which AI provider would you like to use?", choices=["gemini", "groq"]
+            "Which AI provider would you like to use?", choices=["groq", "gemini"]
         ).ask()
         if not provider:
             return False

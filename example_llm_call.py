@@ -8,7 +8,7 @@ def call_llm(prompt: str, retries: int = 3, backoff: float = 5.0) -> str:
     Gemini returns 503/429 during demand spikes. This retries with
     exponential backoff instead of crashing the pipeline.
     """
-    provider = os.environ.get("LLM_PROVIDER", "gemini").lower()
+    provider = os.environ.get("LLM_PROVIDER", "groq").lower()
     last_err = None
 
     for attempt in range(retries):

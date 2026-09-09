@@ -8,7 +8,7 @@ and prints the output to the terminal.
 Usage:
     python3 ai_summarizer.py <path/to/llm_stage.json>
 
-Requires GEMINI_API_KEY to be set and google-genai installed on this host.
+Requires GROQ_API_KEY to be set and groq installed on this host.
 """
 
 import json
@@ -87,5 +87,5 @@ if __name__ == "__main__":
         summarize_stage(sys.argv[1])
     except Exception as e:
         print(f"[-] AI stage failed: {e}", file=sys.stderr)
-        print("    Make sure GEMINI_API_KEY is set and google-genai is installed.", file=sys.stderr)
+        print("    Make sure GROQ_API_KEY is set and groq is installed.", file=sys.stderr)
         sys.exit(1)
