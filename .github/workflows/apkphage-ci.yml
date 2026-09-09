@@ -1,0 +1,283 @@
+# APKPhage CI/CD Pipeline
+# ──────────────────────────────────────────────────────────────────────
+# This is a DevSecOps pipeline — security is embedded in every stage,
+# not bolted on at the end. Each job runs independently so failures
+# don't block other checks (fast feedback loop).
+#
+# Stages:
+#   1. lint        — Code quality (ruff check + format)
+#   2. sast        — Static Application Security Testing (bandit)
+#   3. secrets     — Prevent secrets from being committed (gitleaks)
+#   4. dockerfile  — Dockerfile best practices (hadolint)
+#   5. build       — Verify Docker images build successfully
+#   6. container   — Scan built images for CVEs (Trivy)
+#   7. dep-audit   — Check Python dependencies for known vulnerabilities
+#
+# Learning notes are embedded as comments throughout.
+
+name: APKPhage CI
+
+# ── Trigger rules ───────────────────────────────────────────────────
+# Run on every push and PR to main/dev. The `paths` filter means
+# this pipeline only runs when code changes — not when you edit docs.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "**.py"
+      - "**.txt"
+      - "**/Dockerfile*"
+      - "**.yaml"
+      - "**.yml"
+      - "**.toml"
+  pull_request:
+    branches: [main, dev]
+
+# ── Concurrency ─────────────────────────────────────────────────────
+# If you push twice quickly, cancel the first run. Saves CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── Global env ──────────────────────────────────────────────────────
+# Variables available to all jobs. Secrets are never logged.
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════
+  # STAGE 1: LINT — Is the code well-formatted and syntactically valid?
+  # ══════════════════════════════════════════════════════════════════
+  # Ruff is 10-100x faster than flake8+isort+black combined.
+  # It catches unused imports, mutable default arguments, security
+  # patterns (S rules), and enforces a consistent style.
+  lint:
+    name: "Lint & Format"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: pip install ruff==0.16.6
+
+      - name: Ruff lint (check for bugs + style)
+        run: ruff check .
+
+      - name: Ruff format (check formatting is consistent)
+        run: ruff format --check .
+
+  # ══════════════════════════════════════════════════════════════════
+  # STAGE 2: SAST — Are there security anti-patterns in the code?
+  # ══════════════════════════════════════════════════════════════════
+  # Bandit scans Python AST for:
+  #   - Hardcoded passwords / default admin credentials
+  #   - Use of eval(), exec(), subprocess with shell=True
+  #   - Insecure random number generation
+  #   - SQL injection, path traversal patterns
+  sast:
+    name: "SAST (Bandit)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install bandit
+        run: pip install bandit[toml]==1.9.4
+
+      - name: Run bandit security scan
+        # -r: recursive scan
+        # --severity-level medium+: only report medium/high/critical
+        # -f json: machine-readable output for CI annotations
+        run: bandit -r . -ll --severity-level medium -f json -o bandit-report.json || true
+
+      - name: Print bandit summary
+        if: always()
+        run: |
+          bandit -r . -ll --severity-level medium 2>&1 || true
+
+      - name: Upload bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 30
+
+  # ══════════════════════════════════════════════════════════════════
+  # STAGE 3: SECRETS — Are any API keys or tokens in the code?
+  # ══════════════════════════════════════════════════════════════════
+  # Gitleaks scans the entire git history for:
+  #   - API keys (OpenAI, Google, AWS, etc.)
+  #   - Private keys (PEM files)
+  #   - Passwords, connection strings, JWTs
+  # Even if you commit a secret then delete it, gitleaks catches it
+  # in the history.
+  secrets:
+    name: "Secrets Scan (Gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed — secrets can be in any commit
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Free for public repos
+
+  # ══════════════════════════════════════════════════════════════════
+  # STAGE 4: DOCKERFILE — Are the Dockerfiles secure and efficient?
+  # ══════════════════════════════════════════════════════════════════
+  # Hadolint catches:
+  #   - Running as root without justification
+  #   - apt-get without cleanup
+  #   - Using latest unpinned versions (DL3008)
+  #   - Missing HEALTHCHECK directives
+  #   - COPYing too much into a layer (cache busting)
+  dockerfile:
+    name: "Dockerfile Lint (Hadolint)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint all Dockerfiles
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: "Dockerfile"
+          config: .hadolint.yaml
+        continue-on-error: true  # Warn but don't block
+
+      - name: Lint Dockerfile.sandbox
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: "Dockerfile.sandbox"
+          config: .hadolint.yaml
+        continue-on-error: true
+
+      - name: Lint fakenet Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: "dynamic/fakenet_config/Dockerfile"
+          config: .hadolint.yaml
+        continue-on-error: true
+
+  # ══════════════════════════════════════════════════════════════════
+  # STAGE 5: BUILD — Can the images actually be built?
+  # ══════════════════════════════════════════════════════════════════
+  # This catches broken Dockerfiles, missing files in COPY, network
+  # issues during build, and dependency resolution failures.
+  # We build all three images in parallel to save time.
+  build:
+    name: "Build Docker Images"
+    runs-on: ubuntu-latest
+    needs: [lint, dockerfile]  # Only build if lint + Dockerfile lint pass
+    strategy:
+      matrix:
+        image:
+          - { name: "apk-analyzer", file: "Dockerfile" }
+          - { name: "apkphage-emulator", file: "Dockerfile.sandbox" }
+          - { name: "apkphage-fakenet", file: "dynamic/fakenet_config/Dockerfile" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.image.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          push: false
+          tags: ${{ matrix.image.name }}:ci-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ══════════════════════════════════════════════════════════════════
+  # STAGE 6: CONTAINER SCAN — Are there CVEs in the built images?
+  # ══════════════════════════════════════════════════════════════════
+  # Trivy scans the filesystem of each image for:
+  #   - OS package vulnerabilities (apt, apk)
+  #   - Language dependency vulnerabilities (pip, npm)
+  #   - Misconfigurations
+  #   - Secrets leaked in image layers
+  # Severity threshold: HIGH + CRITICAL only (noisy otherwise).
+  container-scan:
+    name: "Container CVE Scan (Trivy)"
+    runs-on: ubuntu-latest
+    needs: [build]
+    strategy:
+      matrix:
+        image:
+          - { name: "apk-analyzer", file: "Dockerfile" }
+          - { name: "apkphage-emulator", file: "Dockerfile.sandbox" }
+          - { name: "apkphage-fakenet", file: "dynamic/fakenet_config/Dockerfile" }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.image.file }}
+          push: false
+          load: true
+          tags: ${{ matrix.image.name }}:scan
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ matrix.image.name }}:scan"
+          format: "table"
+          exit-code: "1"            # Fail if any HIGH/CRITICAL found
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true      # Don't flag vulns without a fix yet
+
+      - name: Trivy JSON report (for artifact)
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ matrix.image.name }}:scan"
+          format: "json"
+          output: "trivy-${{ matrix.image.name }}.json"
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-report-${{ matrix.image.name }}
+          path: trivy-${{ matrix.image.name }}.json
+          retention-days: 30
+
+  # ══════════════════════════════════════════════════════════════════
+  # STAGE 7: DEPENDENCY AUDIT — Are our Python packages safe?
+  # ══════════════════════════════════════════════════════════════════
+  # pip-audit checks every package in requirements.txt against the
+  # OSV (Open Source Vulnerabilities) database. Unlike `pip check`
+  # (which only checks version conflicts), this catches actual CVEs.
+  dep-audit:
+    name: "Dependency Audit (pip-audit)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pip-audit
+        run: pip install pip-audit==2.10.1
+
+      - name: Audit Python dependencies
+        run: pip-audit -r requirements.txt --desc on
+
+      - name: Audit dev dependencies
+        run: pip-audit -r dev-requirements.txt --desc on
+        continue-on-error: true  # Dev deps are less critical

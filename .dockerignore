@@ -1,0 +1,22 @@
+# Never bake samples or analysis output into the image
+samples*/
+work/
+
+# VCS / editor noise
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Python env / bytecode
+.venv/
+__pycache__/
+*.pyc
+
+# Not part of the static image
+vm/
+dynamic/fakenet_config/
+*.sh
+!sandbox_start.sh
+*.md
+docker-compose.yml

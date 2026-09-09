@@ -1,0 +1,35 @@
+# Pre-commit hooks for APKPhage
+# Install:  pip install pre-commit
+# Activate: pre-commit install
+# Manual run: pre-commit run --all-files
+
+repos:
+  # ── Ruff: fast Python linter + formatter ───────────────────────────
+  # Catches style bugs, unused imports, security patterns (S rules),
+  # and enforces consistent formatting. Config lives in pyproject.toml.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.6
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  # ── Gitleaks: prevent secrets from being committed ────────────────
+  # Scans every staged file for API keys, tokens, passwords, private
+  # keys, and other secrets. Config lives in .gitleaks.toml.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  # ── Hadolint: Dockerfile best practices ───────────────────────────
+  # Validates every Dockerfile for security and layer-efficiency issues
+  # (unused packages, missing HEALTHCHECK, etc). Config in .hadolint.yaml.
+  # Uses local binary — the upstream pre-commit hook only provides Linux.
+  - repo: local
+    hooks:
+      - id: hadolint
+        name: Lint Dockerfiles
+        entry: .venv/Scripts/hadolint.exe
+        language: system
+        types: [dockerfile]

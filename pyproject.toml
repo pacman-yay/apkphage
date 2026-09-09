@@ -1,0 +1,40 @@
+[project]
+name = "apkphage"
+version = "2.0.0"
+description = "Automated Android malware analysis pipeline"
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100           # relaxed: line-too-long is the least important rule
+
+[tool.ruff.lint]
+# Start strict, relax only what genuinely doesn't help:
+#   E/W  = pycodestyle (style)
+#   F    = pyflakes (unused imports, undefined names)
+#   I    = isort (import ordering)
+#   S    = bandit (security — ruff's built-in subset; we also run bandit standalone)
+#   B    = flake8-bugbear (common gotchas: mutable default args, bare except)
+#   UP   = pyupgrade (modernise syntax for target-version)
+select = ["E", "W", "F", "I", "S", "B", "UP"]
+
+# These security rules produce false positives in this codebase:
+#   S110  try-except-pass — legitimate when silently ignoring expected errors
+#   S112  try-except-continue — legitimate in scan loops
+#   S605  os.system() — only used for 'cls'/'clear', safe
+#   S607  partial executable path — all subprocess calls use known-safe commands
+#   S603  subprocess with untrusted input — adb/docker calls with known args
+ignore = ["S110", "S112", "S605"]
+
+[tool.ruff.lint.per-file-ignores]
+# Legacy scripts and fakenet servers don't need full security/style compliance:
+"example_llm_call.py" = ["S105", "S106"]   # hardcoded passwords (intentional examples)
+"dynamic/fakenet_config/*.py" = ["S104"]   # binding 0.0.0.0 is intentional for fakenet
+"cli.py" = ["S603", "S607", "E402", "E501"]  # subprocess calls with known args; delayed imports; rich markup strings
+"orchestrator.py" = ["S603", "S607"]
+"dynamic/dynamic_runner.py" = ["S603", "S607", "E501"]  # adb/frida subprocess calls with known args; spinner strings
+"ai_agent.py" = ["E501"]  # LLM prompt templates — line length enforced by ruff format only
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

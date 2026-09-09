@@ -1,0 +1,35 @@
+# --- Malware samples & analysis output (NEVER commit) ---
+samples/
+work/
+*.apk
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+*.egg
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Docker compose runtime ---
+*.log
+
+# --- Secrets (belt-and-suspenders with gitleaks) ---
+.env
+.env.*
+GEMINI_API_KEY
+GROQ_API_KEY

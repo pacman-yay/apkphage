@@ -1,0 +1,766 @@
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+
+def bootstrap():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_dir = os.path.join(base_dir, ".venv")
+
+    if sys.platform == "win32":
+        python_exe = os.path.join(venv_dir, "Scripts", "python.exe")
+    else:
+        python_exe = os.path.join(venv_dir, "bin", "python")
+
+    if not os.path.exists(python_exe):
+        print("[*] Virtual environment python missing. Recreating .venv...")
+        if os.path.exists(venv_dir):
+            shutil.rmtree(venv_dir, ignore_errors=True)
+        subprocess.run([sys.executable, "-m", "venv", ".venv"], check=True)
+
+    if sys.prefix == sys.base_prefix:
+        sys.exit(subprocess.run([python_exe] + sys.argv).returncode)
+
+    try:
+        import questionary  # noqa: F401
+        import rich  # noqa: F401
+    except ImportError:
+        print("[*] Installing missing dependencies in virtual environment...")
+        if os.path.exists("host_requirements.txt"):
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-r", "host_requirements.txt"], check=True
+            )
+        else:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "google-genai==2.19.0",
+                    "groq>=0.9.0",
+                    "rich>=13.0.0",
+                    "questionary>=2.0.0",
+                ],
+                check=True,
+            )
+        sys.exit(subprocess.run([sys.executable] + sys.argv).returncode)
+
+
+# Bootstrap the virtual environment and re-launch if necessary
+bootstrap()
+
+if sys.stdout.encoding != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8")
+
+import questionary
+from rich.console import Console
+from rich.panel import Panel
+from rich.spinner import SPINNERS
+from rich.table import Table
+
+SPINNERS["cyber_loader"] = {
+    "interval": 100,
+    "frames": [
+        "█ │ │ │ │ │",
+        "│ █ │ │ │ │",
+        "│ │ █ │ │ │",
+        "│ │ │ █ │ │",
+        "│ │ │ │ █ │",
+        "│ │ │ │ │ █",
+        "│ │ │ │ █ │",
+        "│ │ │ █ │ │",
+        "│ │ █ │ │ │",
+        "│ █ │ │ │ │",
+    ],
+}
+
+console = Console()
+base_dir = os.path.dirname(os.path.abspath(__file__))
+SAMPLES_DIR = os.path.join(base_dir, "samples")
+WORK_DIR = os.path.join(base_dir, "work")
+
+
+def print_banner():
+    import platform
+    import subprocess
+
+    # --- Status bar: samples, reports, AI key, Docker ---
+    apks = glob.glob(os.path.join(SAMPLES_DIR, "*.apk"))
+    reports = glob.glob(os.path.join(WORK_DIR, "*", "report.json"))
+    stages = glob.glob(os.path.join(WORK_DIR, "*", "llm_stage.json"))
+    sample_count = len(apks)
+    report_count = len(reports)
+    pending_count = len(stages) - report_count
+
+    provider = os.environ.get("LLM_PROVIDER", "")
+    gemini_key = bool(os.environ.get("GEMINI_API_KEY"))
+    groq_key = bool(os.environ.get("GROQ_API_KEY"))
+    if provider == "groq" and groq_key:
+        ai_status = "[green]Groq configured[/green]"
+    elif provider == "gemini" or gemini_key:
+        ai_status = (
+            "[green]Gemini configured[/green]"
+            if gemini_key
+            else "[yellow]Gemini key missing[/yellow]"
+        )
+    elif groq_key:
+        ai_status = "[green]Groq configured[/green]"
+    else:
+        ai_status = "[yellow]No AI key[/yellow]"
+
+    try:
+        r = subprocess.run(["docker", "info"], capture_output=True, timeout=3)
+        docker_ok = r.returncode == 0
+    except Exception:
+        docker_ok = False
+    docker_status = "[green]Docker online[/green]" if docker_ok else "[red]Docker offline[/red]"
+
+    pending_str = f"  [yellow]({pending_count} pending AI)[/yellow]" if pending_count > 0 else ""
+
+    banner = f"""[bold blue]APKPhage v2.0.0[/bold blue]
+[bold white]Automated Android Malware Analysis Pipeline[/bold white]
+
+  [cyan]Samples:[/cyan] {sample_count} APK  [dim]|[/dim]  [cyan]Reports:[/cyan] {report_count}{pending_str}  [dim]|[/dim]  [cyan]AI:[/cyan] {ai_status}  [dim]|[/dim]  [cyan]Docker:[/cyan] {docker_status}
+
+  [dim white]{platform.system()}/{platform.machine()}[/dim white]  [dim]|[/dim]  [dim white]Stack: Docker, Apktool, Jadx, Frida, KVM/Swiftshader[/dim white]
+  [dim blue]Static: container (--network none)  |  Dynamic: Redroid + Frida  |  AI: host-side Gemini/Groq[/dim blue]"""
+
+    console.print(Panel(banner, border_style="blue", padding=(1, 2), expand=False))
+
+
+ENV_FILE = os.path.join(base_dir, ".env")
+
+
+def load_env():
+    if os.path.exists(ENV_FILE):
+        with open(ENV_FILE) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    os.environ[k] = v
+
+
+load_env()
+
+
+def get_or_prompt_api_key():
+    provider = os.environ.get("LLM_PROVIDER")
+    if not provider:
+        provider = questionary.select(
+            "Which AI provider would you like to use?", choices=["gemini", "groq"]
+        ).ask()
+        if not provider:
+            return False
+        os.environ["LLM_PROVIDER"] = provider
+        with open(ENV_FILE, "a") as f:
+            f.write(f"LLM_PROVIDER={provider}\n")
+
+    key_name = "GROQ_API_KEY" if provider == "groq" else "GEMINI_API_KEY"
+
+    if not os.environ.get(key_name):
+        api_key = questionary.password(
+            f"{key_name} not found. Enter your API key (will be saved for future runs):"
+        ).ask()
+        if not api_key:
+            return False
+        os.environ[key_name] = api_key
+        with open(ENV_FILE, "a") as f:
+            f.write(f"{key_name}={api_key}\n")
+    return True
+
+
+def ensure_dirs():
+    os.makedirs(SAMPLES_DIR, exist_ok=True)
+    os.makedirs(WORK_DIR, exist_ok=True)
+
+
+def load_apk():
+    apk_path = questionary.path("Enter the path to the APK file:").ask()
+    if not apk_path or not os.path.exists(apk_path):
+        console.print("[bold red]Invalid path or file does not exist.[/bold red]")
+        return
+
+    if not apk_path.endswith(".apk"):
+        console.print("[bold red]File must be an .apk[/bold red]")
+        return
+
+    ensure_dirs()
+    dest = os.path.join(SAMPLES_DIR, os.path.basename(apk_path))
+    try:
+        shutil.copy2(apk_path, dest)
+        console.print(f"[bold green]Successfully copied to {dest}[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Failed to copy file: {e}[/bold red]")
+
+
+def run_static_analysis():
+    ensure_dirs()
+    apks = glob.glob(os.path.join(SAMPLES_DIR, "*.apk"))
+    if not apks:
+        console.print(
+            f"[bold red]No APKs found in {SAMPLES_DIR}. Please load an APK first.[/bold red]"
+        )
+        return
+
+    try:
+        with console.status(
+            "[bold white]Building APKPhage Docker image (incremental)...[/bold white]",
+            spinner="dots",
+        ):
+            subprocess.run(
+                ["docker", "build", "-t", "apk-analyzer", "."],
+                cwd=base_dir,
+                check=True,
+                capture_output=True,
+            )
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Failed to build Docker image.[/bold red]")
+        err_msg = e.stderr.decode("utf-8", errors="ignore")
+        console.print(err_msg)
+        if "permission denied" in err_msg.lower():
+            console.print(
+                "\n[bold white]Hint: Your user doesn't have permission to run Docker.[/bold white]"
+            )
+            console.print("Run this command to fix it, then restart your terminal:")
+            console.print("  [bold cyan]sudo usermod -aG docker $USER[/bold cyan]")
+            console.print(
+                "Or just run [bold cyan]newgrp docker[/bold cyan] in this terminal session before running the CLI."
+            )
+        return
+
+    cmd = [
+        "docker",
+        "run",
+        "--rm",
+        "--network",
+        "none",
+        "-v",
+        f"{SAMPLES_DIR}:/app/samples:ro",
+        "-v",
+        f"{WORK_DIR}:/app/work",
+        "apk-analyzer",
+    ]
+    try:
+        with console.status(
+            "[bold white]Running static analysis with --network none...[/bold white]",
+            spinner="dots",
+        ):
+            subprocess.run(cmd, cwd=base_dir, check=True, capture_output=True)
+        console.print("[bold green][+] Static analysis complete.[/bold green]")
+
+        # Fix file ownership since Docker runs as root
+        if sys.platform != "win32":
+            try:
+                uid = os.getuid()
+                gid = os.getgid()
+                subprocess.run(
+                    ["sudo", "chown", "-R", f"{uid}:{gid}", WORK_DIR], stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
+
+        # Auto-run AI if key is present or user accepts
+        if (
+            os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GROQ_API_KEY")
+            or os.environ.get("LLM_PROVIDER")
+            or questionary.confirm("Do you want to automatically run the AI summarizer now?").ask()
+        ):
+            if get_or_prompt_api_key():
+                stages = glob.glob(os.path.join(WORK_DIR, "*", "llm_stage.json"))
+                for stage in stages:
+                    rel_stage = os.path.relpath(stage, WORK_DIR)
+                    console.print(
+                        f"[bold white][*] Auto-running AI Summarizer for {rel_stage}...[/bold white]"
+                    )
+                    try:
+                        import ai_summarizer
+
+                        with console.status(
+                            f"[bold white]Summarizing {rel_stage}...[/bold white]", spinner="dots"
+                        ):
+                            ai_summarizer.summarize_stage(stage)
+                        console.print(
+                            f"[bold green][+] AI Summarization complete for {rel_stage}[/bold green]"
+                        )
+                    except Exception as e:
+                        console.print(
+                            f"[bold red]Failed to run AI summarizer for {rel_stage}: {e}[/bold red]"
+                        )
+        else:
+            console.print(
+                "[bold green]Check 'Generate AI Report' or 'View Report' in the menu.[/bold green]"
+            )
+
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Static analysis failed.[/bold red]")
+        err_msg = e.stderr.decode("utf-8", errors="ignore")
+        console.print(err_msg)
+        if "permission denied" in err_msg.lower():
+            console.print(
+                "\n[bold white]Hint: Your user doesn't have permission to run Docker.[/bold white]"
+            )
+            console.print(
+                "Run: [bold cyan]sudo usermod -aG docker $USER[/bold cyan] and then [bold cyan]newgrp docker[/bold cyan]"
+            )
+
+
+def generate_ai_report():
+    if not get_or_prompt_api_key():
+        console.print("[bold red]API Key is required to run the AI summarizer.[/bold red]")
+        return
+
+    # Fix file ownership since Docker runs as root
+    if sys.platform != "win32":
+        try:
+            uid = os.getuid()
+            gid = os.getgid()
+            subprocess.run(
+                ["sudo", "chown", "-R", f"{uid}:{gid}", WORK_DIR], stderr=subprocess.DEVNULL
+            )
+        except Exception:
+            pass
+
+    # Find llm_stage.json files
+    stages = glob.glob(os.path.join(WORK_DIR, "*", "llm_stage.json"))
+    if not stages:
+        console.print(
+            "[bold red]No pending AI stages (llm_stage.json) found. Run static analysis first.[/bold red]"
+        )
+        return
+
+    choices = [os.path.relpath(s, WORK_DIR) for s in stages]
+    selected = questionary.select("Select the analysis stage to summarize:", choices=choices).ask()
+    if not selected:
+        return
+
+    stage_path = os.path.join(WORK_DIR, selected)
+
+    try:
+        import ai_summarizer
+
+        with console.status(
+            f"[bold white]Running AI Summarizer for {selected}...[/bold white]", spinner="dots"
+        ):
+            ai_summarizer.summarize_stage(stage_path)
+        console.print(f"[bold green][+] AI Summarization complete for {selected}[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Failed to run AI summarizer: {e}[/bold red]")
+
+
+def view_report():
+    reports = glob.glob(os.path.join(WORK_DIR, "*", "report.json"))
+    if not reports:
+        console.print("[bold red]No reports found. Generate an AI report first.[/bold red]")
+        return
+
+    choices = [os.path.relpath(r, WORK_DIR) for r in reports]
+    selected = questionary.select("Select a report to view:", choices=choices).ask()
+    if not selected:
+        return
+
+    report_path = os.path.join(WORK_DIR, selected)
+    with open(report_path) as f:
+        data = json.load(f)
+
+    sample_name = data.get("sample", "Unknown")
+    synthesis = data.get("final_synthesis", {})
+
+    if isinstance(synthesis, str):
+        console.print(
+            f"[yellow]Report for {sample_name} has pending AI summary. Run 'Generate AI Report'.[/yellow]"
+        )
+        return
+
+    console.print(
+        Panel(
+            f"[bold cyan]Executive Summary for {sample_name}[/bold cyan]\n"
+            + synthesis.get("executive_summary", "N/A")
+        )
+    )
+
+    # Classifications
+    classifications = synthesis.get("malware_classification", [])
+    console.print(f"[bold red]Classification:[/bold red] {', '.join(classifications)}")
+
+    # IOCs
+    iocs = synthesis.get("iocs", [])
+    if iocs:
+        ioc_table = Table(title="Indicators of Compromise (IOCs)")
+        ioc_table.add_column("IOC", style="magenta")
+        for ioc in iocs:
+            ioc_table.add_row(str(ioc))
+        console.print(ioc_table)
+
+    # Next Steps
+    next_steps = synthesis.get("recommended_next_steps", [])
+    if next_steps:
+        console.print("[bold blue]Recommended Next Steps:[/bold blue]")
+        for step in next_steps:
+            console.print(f" - {step}")
+
+
+def _kvm_available() -> bool:
+    if sys.platform != "win32" and os.path.exists("/dev/kvm"):
+        return True
+    # Docker Desktop on Windows/macOS: expose the VM's /dev/kvm via opt-in.
+    return os.environ.get("APKPHAGE_SANDBOX_KVM") == "1"
+
+
+def _ensure_emulator_image() -> str:
+    """Build apkphage-emulator from Dockerfile.sandbox lazily (big first build)."""
+    if (
+        subprocess.run(
+            ["docker", "image", "inspect", "apkphage-emulator"], capture_output=True
+        ).returncode
+        == 0
+    ):
+        return "apkphage-emulator"
+    dockerfile = os.path.join(base_dir, "Dockerfile.sandbox")
+    if not os.path.exists(dockerfile):
+        console.print(
+            "[bold red]Dockerfile.sandbox not found - cannot build the emulator sandbox.[/bold red]"
+        )
+        raise SystemExit(1)
+    console.print(
+        "[bold white][*] Building apkphage-emulator (first build downloads ~1GB of Android SDK - be patient)...[/bold white]"
+    )
+    try:
+        subprocess.run(
+            ["docker", "build", "-t", "apkphage-emulator", "-f", "Dockerfile.sandbox", "."],
+            cwd=base_dir,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        console.print(
+            "[bold red]Failed to build the emulator image. Check the build log above.[/bold red]"
+        )
+        raise SystemExit(1) from None
+    return "apkphage-emulator"
+
+
+def _stream_sandbox_logs():
+    """Tail apkphage-sandbox logs in a daemon thread, printing each line.
+
+    Gives the operator a live, honest window into the emulator (QEMU boot,
+    package manager, dex2oat, install) while the analyzer runs. Dies with the
+    process automatically."""
+    import threading
+
+    try:
+        proc = subprocess.Popen(
+            ["docker", "logs", "--tail", "30", "-f", "apkphage-sandbox"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except Exception:
+        return None
+
+    def _tail():
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                line = line.rstrip()
+                if line:
+                    console.print(f"[dim cyan][sandbox][/dim cyan] {line}")
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_tail, daemon=True)
+    t.start()
+    return t
+
+
+def _ensure_fakenet_image() -> str:
+    """Build apkphage-fakenet from dynamic/fakenet_config lazily."""
+    if (
+        subprocess.run(
+            ["docker", "image", "inspect", "apkphage-fakenet"], capture_output=True
+        ).returncode
+        == 0
+    ):
+        return "apkphage-fakenet"
+    fakenet_dir = os.path.join(base_dir, "dynamic", "fakenet_config")
+    if not os.path.exists(os.path.join(fakenet_dir, "Dockerfile")):
+        console.print(
+            "[bold yellow][!] dynamic/fakenet_config/Dockerfile missing - running sandbox WITHOUT fake internet.[/bold yellow]"
+        )
+        return None
+    console.print("[bold white][*] Building apkphage-fakenet (fake DNS/HTTP sink)...[/bold white]")
+    try:
+        subprocess.run(
+            ["docker", "build", "-t", "apkphage-fakenet", "."],
+            cwd=fakenet_dir,
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError:
+        console.print(
+            "[bold red]Failed to build the fakenet image. Check the build log above.[/bold red]"
+        )
+        raise SystemExit(1) from None
+    return "apkphage-fakenet"
+
+
+def run_dynamic_analysis():
+    ensure_dirs()
+    apks = glob.glob(os.path.join(SAMPLES_DIR, "*.apk"))
+    if not apks:
+        console.print(
+            f"[bold red]No APKs found in {SAMPLES_DIR}. Please load an APK first.[/bold red]"
+        )
+        return
+
+    # Build Analyzer Image
+    try:
+        with console.status(
+            "[bold white]Building APKPhage Analyzer image (incremental)...[/bold white]",
+            spinner="dots",
+        ):
+            subprocess.run(
+                ["docker", "build", "-t", "apk-analyzer", "."],
+                cwd=base_dir,
+                check=True,
+                capture_output=True,
+            )
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Failed to build Analyzer image.[/bold red]")
+        if e.stderr:
+            console.print(f"[dim red]{e.stderr.decode('utf-8', errors='ignore')}[/dim red]")
+        return
+
+    console.print(
+        "[bold white][*] Choosing a platform-friendly sandbox for this host...[/bold white]"
+    )
+
+    # Fast path (Linux only): Redroid container Android - needs binder devices.
+    has_binder = os.path.exists("/dev/binderfs") or os.path.exists("/dev/binder")
+    if sys.platform != "win32" and has_binder:
+        console.print(
+            "[bold green]  + Binder devices found - using Redroid (fast container Android).[/bold green]"
+        )
+        sandbox_image = "redroid/redroid:11.0.0-latest"
+        sandbox_extra = ["-v", "/dev/binderfs:/dev/binderfs"]
+        sandbox_cmd = ["androidboot.hardware=redroid"]
+    else:
+        # Platform-friendly path (Windows/macOS/Linux): real Android emulator
+        # via Dockerfile.sandbox. Accelerated with KVM when present, otherwise
+        # software emulation (slow but portable - no binder/ashmem required).
+        console.print(
+            "[bold yellow]  - No binder devices - using Android emulator image (KVM if available, else software).[/bold yellow]"
+        )
+        sandbox_image = _ensure_emulator_image()
+        sandbox_extra = ["--device", "/dev/kvm"] if _kvm_available() else []
+        sandbox_cmd = []
+
+    # Kill any existing sandbox first so the network isn't in use
+    subprocess.run(["docker", "rm", "-f", "apkphage-sandbox"], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", "apk-analyzer-dynamic"], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", "apkphage-fakenet"], capture_output=True)
+
+    # Ensure clean network state
+    subprocess.run(["docker", "network", "rm", "apkphage-net"], capture_output=True)
+    try:
+        subprocess.run(
+            ["docker", "network", "create", "apkphage-net"], capture_output=True, check=True
+        )
+    except subprocess.CalledProcessError:
+        pass  # If it still fails, it probably already exists and is fine
+
+    # Fakenet (fake internet sink) joins the sandbox network when available.
+    # Only meaningful for the emulator path (redroid is Linux-only binder).
+    fakenet_env = []
+    if sys.platform == "win32" or not has_binder:
+        fakenet_image = _ensure_fakenet_image()
+        if fakenet_image:
+            try:
+                subprocess.run(
+                    [
+                        "docker",
+                        "run",
+                        "-d",
+                        "--rm",
+                        "--name",
+                        "apkphage-fakenet",
+                        "--network",
+                        "apkphage-net",
+                        fakenet_image,
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+                fakenet_env = ["-e", "FAKENET_HOST=apkphage-fakenet"]
+                console.print(
+                    "[bold green]  + Fake internet sink online (DNS/HTTP/HTTPS -> fakenet).[/bold green]"
+                )
+            except subprocess.CalledProcessError as e:
+                console.print(
+                    "[bold yellow][!] Could not start fakenet - continuing without it.[/bold yellow]"
+                )
+                if e.stderr:
+                    console.print(
+                        f"[dim yellow]{e.stderr.decode('utf-8', errors='ignore')}[/dim yellow]"
+                    )
+
+    # Start Sandbox
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "run",
+                "-d",
+                "--rm",
+                "--name",
+                "apkphage-sandbox",
+                "--privileged",
+                "--network",
+                "apkphage-net",
+            ]
+            + fakenet_env
+            + sandbox_extra
+            + [sandbox_image]
+            + sandbox_cmd,
+            check=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Failed to start the sandbox container.[/bold red]")
+        if e.stderr:
+            console.print(f"[dim red]{e.stderr.decode('utf-8', errors='ignore')}[/dim red]")
+        return
+
+    try:
+        console.print(
+            "[bold white][*] Sandbox container started. Boot is verified inside the analyzer stage (bounded wait, no hang).[/bold white]"
+        )
+
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-it",
+            "--name",
+            "apk-analyzer-dynamic",
+            "--network",
+            "apkphage-net",
+            "-e",
+            "HOST_IP=apkphage-sandbox",
+            "-v",
+            f"{SAMPLES_DIR}:/app/samples:ro",
+            "-v",
+            f"{WORK_DIR}:/app/work",
+            "apk-analyzer",
+            "--dynamic",
+        ]
+
+        # Stream sandbox container logs live so the operator can see the
+        # emulator boot / package manager / dex2oat progress in real time.
+        _stream_sandbox_logs()
+
+        console.print(
+            "[bold white]Starting Full Analysis Pipeline (Static -> Emulation -> Frida)...[/bold white]"
+        )
+        subprocess.run(cmd, cwd=base_dir, check=True)
+        console.print("[bold green][+] Analysis complete. Logs saved in work/[/bold green]")
+
+        # Fix file ownership
+        if sys.platform != "win32":
+            try:
+                uid = os.getuid()
+                gid = os.getgid()
+                subprocess.run(
+                    ["sudo", "chown", "-R", f"{uid}:{gid}", WORK_DIR], stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                pass
+
+        # Auto-run AI if key is present
+        if (
+            os.environ.get("GEMINI_API_KEY")
+            or os.environ.get("GROQ_API_KEY")
+            or os.environ.get("LLM_PROVIDER")
+        ):
+            if get_or_prompt_api_key():
+                stages = glob.glob(os.path.join(WORK_DIR, "*", "llm_stage.json"))
+                for stage in stages:
+                    rel_stage = os.path.relpath(stage, WORK_DIR)
+                    console.print(
+                        f"[bold white][*] Auto-running AI Summarizer for {rel_stage}...[/bold white]"
+                    )
+                    import ai_summarizer
+
+                    ai_summarizer.summarize_stage(stage)
+
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Analysis failed.[/bold red]")
+        if e.stderr:
+            console.print(f"[dim red]{e.stderr.decode('utf-8', errors='ignore')}[/dim red]")
+    finally:
+        console.print("[bold white][*] Destroying sandbox and network...[/bold white]")
+        subprocess.run(["docker", "stop", "apkphage-sandbox"], capture_output=True)
+        subprocess.run(["docker", "stop", "apkphage-fakenet"], capture_output=True)
+        subprocess.run(["docker", "network", "rm", "apkphage-net"], capture_output=True)
+
+
+def main():
+    os.chdir(base_dir)
+
+    style = questionary.Style(
+        [
+            ("qmark", "fg:#007acc bold"),
+            ("question", "bold"),
+            ("answer", "fg:#007acc bold"),
+            ("pointer", "fg:#007acc bold"),
+            ("highlighted", "fg:#007acc bold"),
+            ("selected", "fg:#007acc bold"),
+            ("separator", "fg:#cc5454"),
+            ("instruction", "fg:#808080"),
+            ("text", ""),
+            ("disabled", "fg:#858585 italic"),
+        ]
+    )
+
+    while True:
+        os.system("cls" if os.name == "nt" else "clear")
+        print_banner()
+
+        choice = questionary.select(
+            "Select action:",
+            choices=[
+                questionary.Choice("Load APK File", value="1"),
+                questionary.Choice("Run Static Analysis (Docker)", value="2"),
+                questionary.Choice("Run Full Pipeline (Static + Dynamic + Sandbox)", value="3"),
+                questionary.Choice("Generate AI Report", value="4"),
+                questionary.Choice("View Report", value="5"),
+                questionary.Choice("Exit", value="6"),
+            ],
+            style=style,
+            qmark="",
+            pointer="❯",
+            use_indicator=True,
+        ).ask()
+
+        if choice is None or choice == "6":
+            console.print("[bold green]Exiting. Stay safe![/bold green]")
+            break
+        elif choice == "1":
+            load_apk()
+        elif choice == "2":
+            run_static_analysis()
+        elif choice == "3":
+            run_dynamic_analysis()
+        elif choice == "4":
+            generate_ai_report()
+        elif choice == "5":
+            view_report()
+
+        input("\nPress Enter to return to the menu...")
+
+
+if __name__ == "__main__":
+    main()

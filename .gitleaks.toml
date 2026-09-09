@@ -1,0 +1,48 @@
+# Gitleaks configuration for APKPhage
+# https://github.com/gitleaks/gitleaks
+
+title = "APKPhage secrets scan"
+
+# Only scan these file types (faster, fewer false positives)
+[allowlist]
+  description = "Allowlist — known false positives in this repo"
+  paths = [
+    # Test fixtures / examples — no real secrets
+    "example_llm_call\\.py",
+    # Work directory is .gitignored but double-guard
+    "^work/",
+    # Generated cert for fakenet (not a real secret)
+    "dynamic/fakenet_config/cert\\.pem",
+    "dynamic/fakenet_config/key\\.pem",
+  ]
+
+# Custom rules for this project's specific patterns
+[[rules]]
+  id = "gemini-api-key"
+  description = "Google Gemini API key"
+  regex = '''AIza[0-9A-Za-z\-_]{35}'''
+  tags = ["api-key", "gemini"]
+
+[[rules]]
+  id = "openai-api-key"
+  description = "OpenAI API key"
+  regex = '''sk-[0-9a-zA-Z]{48}'''
+  tags = ["api-key", "openai"]
+
+[[rules]]
+  id = "groq-api-key"
+  description = "Groq API key"
+  regex = '''gsk_[0-9a-zA-Z]{52}'''
+  tags = ["api-key", "groq"]
+
+[[rules]]
+  id = "github-token"
+  description = "GitHub personal access token"
+  regex = '''ghp_[0-9a-zA-Z]{36}'''
+  tags = ["token", "github"]
+
+[[rules]]
+  id = "private-key-pem"
+  description = "PEM private key block"
+  regex = '''-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----'''
+  tags = ["private-key"]

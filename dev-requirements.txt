@@ -1,0 +1,16 @@
+# APKPhage DevSecOps tools — installed in CI and for pre-commit hooks.
+# These are development-only dependencies; NOT shipped in the production container.
+
+# --- Linting & formatting ---
+ruff>=0.8.0             # ultra-fast Python linter (replaces flake8, isort, black)
+mypy>=1.13.0            # static type checker (optional, heavy — used in CI only)
+
+# --- Security scanning ---
+bandit>=1.8.0           # Python SAST (finds eval(), hardcoded secrets, injection)
+pip-audit>=2.7.0        # checks installed packages against PyPI vulnerability DB
+
+# --- Pre-commit hook management ---
+pre-commit>=4.0.0       # git hook runner (runs ruff, gitleaks, hadolint on commit)
+
+# --- Secrets detection ---
+# gitleaks is a Go binary — installed via pre-commit or GitHub Action, not pip.

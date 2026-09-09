@@ -1,0 +1,21 @@
+# Hadolint configuration for APKPhage Dockerfiles
+# https://github.com/hadolint/hadolint
+
+# Treat DL3008 (pin versions in apt-get) as warning — we use latest
+# from Debian/Ubuntu repos intentionally for tool compatibility.
+ignored:
+  - DL3008   # Pin versions in apt-get install
+  - DL3013   # Pin versions in pip install
+  - DL3015   # --no-install-recommends (we intentionally install everything)
+  - DL3042   # Avoid pip install with --no-cache-dir (false positive on slim images)
+  - DL3047   # wget without progress bar (we use -q for clean logs)
+  - DL4006   # Set SHELL -o pipefail (not needed for our simple管道)
+
+# Warning thresholds
+warningThreshold: 0
+errorThreshold: 0
+
+# Trusted registries (optional — uncomment if needed)
+# trustedRegistries:
+#   - docker.io
+#   - ghcr.io

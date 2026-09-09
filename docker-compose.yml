@@ -1,0 +1,49 @@
+services:
+  emulator:
+    # Platform-friendly Android emulator (Linux/macOS/Windows).
+    # Auto-detects /dev/kvm inside the container; falls back to software
+    # emulation when absent, so no KVM is required to boot.
+    build:
+      context: .
+      dockerfile: Dockerfile.sandbox
+    privileged: true
+    # Uncomment on hosts that expose KVM to accelerate boot:
+    # devices:
+    #   - /dev/kvm
+    ports:
+      - "5555:5555"           # ADB
+    environment:
+      - FAKENET_HOST=fakenet
+    depends_on:
+      fakenet:
+        condition: service_started
+    networks:
+      - analysis_net
+
+  fakenet:
+    build: ./dynamic/fakenet_config
+    networks:
+      - analysis_net
+    # This container answers DNS/HTTP/HTTPS with fake responses so the
+    # emulator "sees" a live internet without anything reaching the real one.
+
+  analyzer:
+    build: .
+    depends_on:
+      - emulator
+    environment:
+      - HOST_IP=emulator
+    command: ["python3", "orchestrator.py", "--dynamic"]
+    volumes:
+      - ./samples:/app/samples:ro
+      - ./work:/app/work
+    networks:
+      - analysis_net
+    # Note: this service DOES need network access to reach the emulator
+    # and fakenet containers - that's fine, it's all internal to
+    # analysis_net, which itself should have no route to the real internet.
+
+networks:
+  analysis_net:
+    driver: bridge
+    internal: true            # CRITICAL: no route out to the real internet

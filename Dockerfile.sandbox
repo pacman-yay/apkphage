@@ -1,0 +1,54 @@
+# Platform-friendly dockerized Android emulator for APKPhage.
+#
+# Works on:
+#   - Linux hosts with /dev/kvm          (accelerated, fast)
+#   - Linux hosts without KVM            (software emulation - slow but boots)
+#   - Docker Desktop on Windows/macOS    (software emulation via the VM)
+#
+# The start script auto-detects KVM and falls back to QEMU software mode.
+#
+# Build:
+#   docker build -t apkphage-emulator -f Dockerfile.sandbox .
+#
+# Run (KVM host):
+#   docker run -d --rm --name apkphage-sandbox --privileged \
+#       --network apkphage-net \
+#       --device /dev/kvm \
+#       apkphage-emulator
+#
+# Run (no KVM):
+#   docker run -d --rm --name apkphage-sandbox --privileged \
+#       --network apkphage-net \
+#       apkphage-emulator
+#
+# adb is reachable on the container's docker-network IP at port 5555.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y \
+    openjdk-17-jdk wget unzip socat libgl1-mesa-glx \
+    libpulse0 libx11-6 libxcb1 libxext6 libxrender1 \
+    libxcomposite1 libnss3 libasound2 libgl1-mesa-dri \
+    android-tools-adb \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV ANDROID_HOME=/opt/android-sdk
+ENV PATH=${PATH}:${ANDROID_HOME}/emulator:${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools
+
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools && \
+    wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline.zip && \
+    unzip -q cmdline.zip -d ${ANDROID_HOME}/cmdline-tools && \
+    mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest && \
+    rm cmdline.zip
+
+RUN yes | sdkmanager --licenses
+# x86_64 image = runs on all modern Intel/AMD hosts, in both accel modes
+RUN sdkmanager "platform-tools" "platforms;android-30" "emulator" "system-images;android-30;google_apis;x86_64"
+
+RUN echo "no" | avdmanager create avd -n sandbox -k "system-images;android-30;google_apis;x86_64"
+
+COPY sandbox_start.sh /start.sh
+RUN chmod +x /start.sh
+
+EXPOSE 5555
+ENTRYPOINT ["/start.sh"]
