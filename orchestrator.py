@@ -106,7 +106,7 @@ def run_dynamic_stage(apk_path: str, manifest_findings: dict, sample_work_dir: s
     frida_log = run_frida_hooks(
         package_name,
         "/app/dynamic/frida_hooks.js",
-        duration_seconds=60,
+        duration_seconds=180,
     )
 
     log_path = os.path.join(sample_work_dir, "frida_log.txt")

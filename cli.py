@@ -694,7 +694,12 @@ def run_dynamic_analysis():
                     )
                     import ai_summarizer
 
-                    ai_summarizer.summarize_stage(stage)
+                    try:
+                        ai_summarizer.summarize_stage(stage)
+                    except Exception as e:
+                        console.print(
+                            f"[bold yellow][!] AI summarizer failed: {e.__class__.__name__}: {e}[/bold yellow]"
+                        )
 
     except subprocess.CalledProcessError as e:
         console.print("[bold red]Analysis failed.[/bold red]")
