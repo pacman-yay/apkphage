@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 
 
 def bootstrap():
@@ -58,6 +59,7 @@ if sys.stdout.encoding != "utf-8":
 
 import questionary
 from rich.console import Console
+from rich.live import Live
 from rich.panel import Panel
 from rich.spinner import SPINNERS
 from rich.table import Table
@@ -244,11 +246,7 @@ def run_static_analysis():
         "apk-analyzer",
     ]
     try:
-        with console.status(
-            "[bold white]Running static analysis with --network none...[/bold white]",
-            spinner="dots",
-        ):
-            subprocess.run(cmd, cwd=base_dir, check=True, capture_output=True)
+        _run_analyzer_live(cmd, base_dir)
         console.print("[bold green][+] Static analysis complete.[/bold green]")
 
         # Fix file ownership since Docker runs as root
@@ -442,13 +440,14 @@ def _ensure_emulator_image() -> str:
     return "apkphage-emulator"
 
 
-def _stream_sandbox_logs():
+def _stream_sandbox_logs(console_override=None):
     """Tail apkphage-sandbox logs in a daemon thread, printing each line.
 
     Gives the operator a live, honest window into the emulator (QEMU boot,
     package manager, dex2oat, install) while the analyzer runs. Dies with the
-    process automatically."""
-    import threading
+    process automatically. Accepts a console override so it can print into a
+    rich Live region."""
+    out_console = console_override or console
 
     try:
         proc = subprocess.Popen(
@@ -465,13 +464,139 @@ def _stream_sandbox_logs():
             for line in iter(proc.stdout.readline, ""):
                 line = line.rstrip()
                 if line:
-                    console.print(f"[dim cyan][sandbox][/dim cyan] {line}")
+                    out_console.print(f"[dim cyan][sandbox][/dim cyan] {line}")
         except Exception:
             pass
 
     t = threading.Thread(target=_tail, daemon=True)
     t.start()
     return t
+
+
+def _pipeline_status():
+    """Read the analyzer's latest live phase report from the work mount."""
+    paths = glob.glob(os.path.join(WORK_DIR, "*", "pipeline_status.json"))
+    if not paths:
+        return None
+    try:
+        with open(paths[0], encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+_STATE_SYMBOL = {
+    "pending": "[dim]·[/dim]",
+    "running": "[bold cyan]●[/bold cyan]",
+    "done": "[bold green]✓[/bold green]",
+    "failed": "[bold red]✗[/bold red]",
+}
+
+
+def _master_panel(status):
+    """Build the bottom-pinned master progress panel from live status."""
+    if not status:
+        return Panel(
+            "[dim]Waiting for the analyzer to report phase state...[/dim]",
+            title="MASTER PROGRESS",
+            border_style="cyan",
+            padding=(0, 1),
+        )
+
+    phases = status.get("phases", [])
+    total = status.get("elapsed_total", 0)
+    pct = status.get("percent", 0)
+
+    mins, secs = divmod(total, 60)
+    bar_fill = "█" * (pct // 2)
+    bar_rest = "░" * (50 - pct // 2)
+    header = f"[bold blue]MASTER PROGRESS[/bold blue]  [cyan]{pct}%[/cyan]  [dim]({mins}m {secs:02d}s)[/dim]"
+    bar = f"[cyan]{bar_fill}[/cyan][dim]{bar_rest}[/dim]"
+
+    rows = [header, bar]
+    for ph in phases:
+        name = ph.get("name", "?")
+        state = ph.get("state", "pending")
+        elapsed = ph.get("elapsed", 0)
+        sym = _STATE_SYMBOL.get(state, _STATE_SYMBOL["pending"])
+        if state == "running":
+            label = f"[bold]{name}[/bold] [yellow]running {elapsed}s[/yellow]"
+        elif state == "done":
+            label = f"[green]{name}[/green] [dim]({elapsed}s)[/dim]"
+        elif state == "failed":
+            label = f"[red]{name}[/red] [red]FAILED[/red]"
+        else:
+            label = f"[dim]{name} — pending[/dim]"
+        rows.append(f"  {sym}  {label}")
+
+    return Panel("\n".join(rows), border_style="cyan", padding=(0, 1))
+
+
+def _stream_normalize(line):
+    """Turn a raw analyzer output chunk into print-worthy lines.
+
+    The container's loaders overwrite in-place with \\r; collapse each chunk to
+    its final frame so heartbeats don't pile up on the terminal."""
+    out = []
+    for part in line.split("\n"):
+        part = part.rstrip("\r").strip()
+        if not part:
+            continue
+        frames = part.split("\r")
+        out.append(frames[-1])
+    return out
+
+
+def _run_analyzer_live(cmd, cwd):
+    """Run the analyzer container beneath a bottom-pinned live progress panel.
+
+    Analyzer/sandbox stdout prints ABOVE the panel (rich groups that output,
+    then redraws the live region), so the operator keeps full visibility of the
+    pipeline's overall state at all times."""
+    import queue
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    q = queue.Queue()
+
+    def _reader():
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                q.put(line)
+        except Exception:
+            pass
+
+    threading.Thread(target=_reader, daemon=True).start()
+
+    with Live(
+        _master_panel(_pipeline_status()),
+        console=console,
+        refresh_per_second=4,
+        vertical_overflow="visible",
+    ) as live:
+        _stream_sandbox_logs(live.console)
+        last_key = None
+        while proc.poll() is None:
+            try:
+                line = q.get(timeout=1)
+                for part in _stream_normalize(line):
+                    live.console.print(part, highlight=False)
+            except queue.Empty:
+                status = _pipeline_status()
+                key = json.dumps(status) if status else None
+                if status and key != last_key:
+                    last_key = key
+                    live.update(_master_panel(status))
+
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
 
 
 def _ensure_fakenet_image() -> str:
@@ -641,7 +766,6 @@ def run_dynamic_analysis():
             "docker",
             "run",
             "--rm",
-            "-it",
             "--name",
             "apk-analyzer-dynamic",
             "--network",
@@ -656,14 +780,10 @@ def run_dynamic_analysis():
             "--dynamic",
         ]
 
-        # Stream sandbox container logs live so the operator can see the
-        # emulator boot / package manager / dex2oat progress in real time.
-        _stream_sandbox_logs()
-
         console.print(
             "[bold white]Starting Full Analysis Pipeline (Static -> Emulation -> Frida)...[/bold white]"
         )
-        subprocess.run(cmd, cwd=base_dir, check=True)
+        _run_analyzer_live(cmd, base_dir)
         console.print("[bold green][+] Analysis complete. Logs saved in work/[/bold green]")
 
         # Fix file ownership
