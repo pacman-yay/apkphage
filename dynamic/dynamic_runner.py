@@ -143,12 +143,21 @@ def _run_with_liveness(
                         status = "checking guest..."
                 h = f" | {hint}" if hint else ""
                 s = f" | {status}" if status else ""
-                print(f"[*] still working... ({elapsed}s) {char}{h}{s}", flush=True)
+                # In-place rewrite (no newline) so heartbeats never spam the
+                # scrollback. The CLI's master progress panel already ticks
+                # the phase's elapsed time, so this is only reassurance that
+                # the command is alive; it collapses to its last frame when
+                # captured by the panel's stream normalizer.
+                sys.stdout.write(f"\r[*] still working... ({elapsed}s) {char}{h}{s}")
+                sys.stdout.flush()
                 last_beat = time.time()
             if timeout and time.time() - start > timeout:
                 proc.terminate()
                 print(f"[-] command timed out after {int(timeout)}s; killed.", file=sys.stderr)
                 break
+    # Clear the leftover rotating heartbeat line before trailing output.
+    sys.stdout.write("\r" + " " * 120 + "\r")
+    sys.stdout.flush()
     # Drain any trailing output
     while not queue_.empty():
         line = queue_.get_nowait()
