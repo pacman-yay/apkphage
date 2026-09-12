@@ -311,9 +311,53 @@ def launch_app(package_name: str):
     )
 
 
+def _get_pid(package_name: str, timeout: float = 120) -> str | None:
+    """Return the guest PID for a package once its process is up."""
+    start = time.time()
+    last_beat = 0.0
+    while time.time() - start < timeout:
+        res = _adb("shell", f"pidof {package_name}", timeout=10)
+        pid = res.stdout.strip()
+        if pid:
+            return pid.split()[-1]  # newest process if multiple
+        now = time.time()
+        if now - last_beat >= 2:
+            elapsed = int(now - start)
+            print(
+                "\r"
+                + f"[*] waiting for {package_name} process... ({elapsed}s) {_SPIN[elapsed % 4]}   ",
+                end="",
+                flush=True,
+            )
+            last_beat = now
+        time.sleep(1)
+    print("\r", end="")
+    return None
+
+
 def run_frida_hooks(package_name: str, script_path: str, duration_seconds: int = 60):
+    # Frida's spawn mode (-f) has a fixed internal startup timeout that
+    # software emulation routinely busts ("Failed to spawn: unexpectedly
+    # timed out"). Robust path: launch via monkey, then ATTACH by PID -
+    # attaching never competes with app cold-start, so the hook always lands.
+    launch_app(package_name)
+    pid = _get_pid(package_name)
+    if not pid:
+        print("[-] app never spawned a process; attaching anyway (PID lookup failed)", flush=True)
+        attach_target = package_name
+    else:
+        attach_target = pid
+        print(f"[+] {package_name} up (pid {pid}) - attaching Frida...", flush=True)
+
     proc = subprocess.Popen(
-        ["frida", "-U", "-f", package_name, "-l", script_path],
+        [
+            "frida",
+            "-U",
+            "-p" if attach_target.isdigit() else "-n",
+            attach_target,
+            "-l",
+            script_path,
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
