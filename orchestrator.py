@@ -102,9 +102,10 @@ def run_apktool(apk_path: str, out_dir: str):
 
 def run_jadx(apk_path: str, out_dir: str):
     # non-zero exit on the encrypted-asset noise is expected - don't
-    # treat it as fatal, same as we saw manually
+    # treat it as fatal, same as we saw manually. -j 2 keeps the JVM from
+    # spawning one decompile thread per core (memory hog on this box).
     _run_streamed(
-        ["jadx", "-d", out_dir, apk_path],
+        ["jadx", "-d", out_dir, "-j", "2", apk_path],
         "Running jadx (decompiling classes)",
     )
 

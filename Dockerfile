@@ -22,6 +22,12 @@ RUN wget -q https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts
     && wget -q https://bitbucket.org/iBotPeaches/apktool/downloads/apktool_2.9.3.jar -O /usr/local/bin/apktool.jar \
     && chmod +x /usr/local/bin/apktool
 
+# Cap JVM heaps. apktool/jadx default to ~25%-50% of system RAM each,
+# and this container shares the WSL2 VM with a software-emulated QEMU
+# (the memory hog). Without caps, peaks collide -> OOM killer reaps us.
+# Both wrapper scripts honor $JAVA_OPTS (jadx defaults to -Xmx4g otherwise).
+ENV JAVA_OPTS="-Xms128m -Xmx1g"
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --break-system-packages -r requirements.txt
