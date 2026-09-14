@@ -1,7 +1,7 @@
 """Host-side AI summarizer.
 
 Runs OUTSIDE the network-isolated container, on the Kali host. Reads the
-llm_stage.json produced by the static stage, calls Gemini for each flagged
+llm_stage.json produced by the static stage, calls Groq for each flagged
 file, synthesizes a structured summary, merges everything into report.json,
 and prints the output to the terminal.
 
@@ -17,6 +17,18 @@ import sys
 
 from ai_agent import build_synthesis_prompt, parse_json_response
 from example_llm_call import call_llm
+
+
+def _merge_dynamic_evidence(work_dir: str, report: dict):
+    """Merge the dynamic-stage evidence (frida attach grade + network capture)
+    into the report so the final artifact reflects the whole pipeline."""
+    evidence_path = os.path.join(work_dir, "dynamic_evidence.json")
+    if os.path.exists(evidence_path):
+        try:
+            with open(evidence_path) as f:
+                report["dynamic_evidence"] = json.load(f)
+        except (OSError, ValueError):
+            pass
 
 
 def summarize_stage(stage_path: str):
@@ -56,7 +68,11 @@ def summarize_stage(stage_path: str):
 
     print("[+] Synthesizing final structured report ...", flush=True)
     prompt = build_synthesis_prompt(
-        stage["manifest_findings"], stage["entropy_findings"], per_file_summaries
+        stage["manifest_findings"],
+        stage.get("entropy_findings", []),
+        per_file_summaries,
+        stage.get("trust_facts", {}),
+        stage.get("yara_findings", []),
     )
     try:
         raw = call_llm(prompt)
@@ -70,6 +86,11 @@ def summarize_stage(stage_path: str):
         report = json.load(f)
     report["per_file_ai_summaries"] = per_file_summaries
     report["final_synthesis"] = synthesis
+    if "trust_facts" not in report:
+        report["trust_facts"] = stage.get("trust_facts", {})
+    if "yara_findings" not in report:
+        report["yara_findings"] = stage.get("yara_findings", [])
+    _merge_dynamic_evidence(work_dir, report)
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
 

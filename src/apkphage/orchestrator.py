@@ -8,10 +8,13 @@ import time
 from contextlib import contextmanager
 
 from ai_agent import build_agent_calls
+from apk_trust import build_trust_facts
 from entropy_scanner import scan_assets
 from manifest_parser import parse_manifest
-from progress import Pipeline
 from report_template import build_report, write_report
+from yara_scan import scan_apk
+
+from apkphage.progress import Pipeline
 
 SAMPLES_DIR = "/app/samples"
 WORK_DIR = "/app/work"
@@ -138,6 +141,21 @@ def analyze_sample(apk_path: str, pipe: Pipeline):
             entropy_findings = scan_assets(assets_dir) if os.path.isdir(assets_dir) else []
     print(f"[+] {len(entropy_findings)} high-entropy asset(s) flagged.")
 
+    print("[+] Extracting APK trust facts (signer, SDK levels, packers)...")
+    with pipe.phase("trust"):
+        with _loading("Extracting trust facts"):
+            trust_facts = build_trust_facts(apk_path, apktool_out)
+    print(
+        f"[+] Trust facts: signer={bool(trust_facts.get('signer'))} "
+        f"sdk={trust_facts.get('sdk_levels', {})} packers={trust_facts.get('packers', [])}"
+    )
+
+    print("[+] Running YARA rules over decoded app...")
+    with pipe.phase("yara"):
+        with _loading("Running YARA rules"):
+            yara_findings = scan_apk(sample_work_dir)
+    print(f"[+] {len(yara_findings)} YARA rule hit(s).")
+
     sources_dir = os.path.join(jadx_out, "sources")
     print("[+] Triaging decompiled source for suspicious patterns...")
     with pipe.phase("triage"):
@@ -156,6 +174,8 @@ def analyze_sample(apk_path: str, pipe: Pipeline):
                 {
                     "sample": sample_name,
                     "manifest_findings": manifest_findings,
+                    "trust_facts": trust_facts,
+                    "yara_findings": yara_findings,
                     "entropy_findings": entropy_findings,
                     "per_file_calls": per_file_calls,
                 },
@@ -174,6 +194,8 @@ def analyze_sample(apk_path: str, pipe: Pipeline):
         entropy_findings,
         per_file_summaries,
         final_synthesis,
+        trust_facts,
+        yara_findings,
     )
     report_path = os.path.join(sample_work_dir, "report.json")
     write_report(report, report_path)
@@ -181,7 +203,7 @@ def analyze_sample(apk_path: str, pipe: Pipeline):
 
 
 def run_dynamic_stage(apk_path: str, manifest_findings: dict, sample_work_dir: str, pipe: Pipeline):
-    from dynamic.dynamic_runner import (
+    from apkphage.dynamic.dynamic_runner import (
         get_package_name,
         install_apk,
         run_frida_hooks,
@@ -200,7 +222,7 @@ def run_dynamic_stage(apk_path: str, manifest_findings: dict, sample_work_dir: s
 
     print(f"[+] Launching {package_name} and attaching Frida hooks...")
     with pipe.phase("frida"):
-        frida_log = run_frida_hooks(
+        frida_result = run_frida_hooks(
             package_name,
             "/app/dynamic/frida_hooks.js",
             duration_seconds=180,
@@ -208,8 +230,56 @@ def run_dynamic_stage(apk_path: str, manifest_findings: dict, sample_work_dir: s
 
     log_path = os.path.join(sample_work_dir, "frida_log.txt")
     with open(log_path, "w") as f:
-        f.writelines(frida_log)
-    print(f"[+] Frida log written to {log_path}")
+        f.writelines(frida_result["log"])
+    if frida_result["attached"]:
+        print(f"[+] Frida attached (attempt {frida_result['attempts']}) - log in {log_path}")
+    else:
+        print(
+            f"[-] Frida never attached after {frida_result['attempts']} attempts - log in {log_path}"
+        )
+
+    # Collect whatever raw network traffic the sandbox captured (if any) and
+    # persist the graded evidence next to the frida log for the host-side
+    # report merge.
+    captured = os.path.join(WORK_DIR, "_net_capture.txt")
+    if os.path.exists(captured):
+        net_path = os.path.join(sample_work_dir, "network_capture.txt")
+        try:
+            os.replace(captured, net_path)
+            print(f"[+] Network capture saved to {net_path}")
+        except OSError:
+            pass
+
+    # Fakenet logs every DNS query + HTTP/HTTPS/proxy request it answered for
+    # the sample; harvest it into the sample dir alongside the tcpdump.capture.
+    fakenet_log = os.path.join(WORK_DIR, "fakenet_requests.log")
+    if os.path.exists(fakenet_log):
+        flat = os.path.join(sample_work_dir, "fakenet_requests.log")
+        try:
+            os.replace(fakenet_log, flat)
+            print(f"[+] Fakenet request log saved to {flat}")
+        except OSError:
+            pass
+
+    evidence = {
+        "frida": {
+            "attached": frida_result["attached"],
+            "attempts": frida_result["attempts"],
+            "quit_marker": frida_result["quit_marker"],
+            "output_lines": frida_result["output_lines"],
+            "log_file": "frida_log.txt",
+        },
+        "network_capture": "network_capture.txt"
+        if os.path.exists(os.path.join(sample_work_dir, "network_capture.txt"))
+        else None,
+        "fakenet_requests": "fakenet_requests.log"
+        if os.path.exists(os.path.join(sample_work_dir, "fakenet_requests.log"))
+        else None,
+    }
+    evidence_path = os.path.join(sample_work_dir, "dynamic_evidence.json")
+    with open(evidence_path, "w") as f:
+        json.dump(evidence, f, indent=2)
+    print(f"[+] Dynamic evidence written to {evidence_path}")
 
 
 def main():

@@ -41,6 +41,7 @@ RUN FRIDA_VER=$(pip3 show frida | grep ^Version: | awk '{print $2}') && \
 
 COPY *.py .
 COPY dynamic/ ./dynamic/
+COPY rules/ ./rules/
 
 # Isolation reminder: this container gets NO network access at runtime.
 # Build-time network access above is fine (pulling tools); runtime is not.

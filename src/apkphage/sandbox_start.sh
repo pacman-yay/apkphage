@@ -41,6 +41,17 @@ emulator -avd sandbox \
     ${EXTRA_ARGS} \
     ${FAKENET_OPTS} &
 
+# Network capture is ON by default now: the whole point of a sandbox is a
+# readable record of what the sample tried to reach. tcpdump dumps raw
+# DNS/HTTP/HTTPS/proxy frames to a shared file the orchestrator harvests.
+# Set CAPTURE_NET=0 to disable (e.g. to reduce noise on very slow hosts).
+if [ "${CAPTURE_NET:-1}" != "0" ]; then
+    NET_CAPTURE_FILE=${NET_CAPTURE_FILE:-/app/work/_net_capture.txt}
+    echo "[+] Network capture enabled - tcpdump -> ${NET_CAPTURE_FILE}"
+    mkdir -p "$(dirname "${NET_CAPTURE_FILE}")"
+    (tcpdump -i eth0 -nn -s 0 -A 2>/dev/null > "${NET_CAPTURE_FILE}") &
+fi
+
 # The emulator's adb listens on 127.0.0.1:5555. Expose it on the container's
 # docker-network IP so the analyzer can reach it as <name>:5555. Binding to
 # the eth0 IP (not 0.0.0.0) avoids clashing with the emulator's localhost port.

@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
     openjdk-17-jdk wget unzip socat libgl1-mesa-glx \
     libpulse0 libx11-6 libxcb1 libxext6 libxrender1 \
     libxcomposite1 libnss3 libasound2 libgl1-mesa-dri \
-    android-tools-adb \
+    android-tools-adb tcpdump \
     && rm -rf /var/lib/apt/lists/*
 
 ENV ANDROID_HOME=/opt/android-sdk

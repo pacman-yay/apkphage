@@ -15,8 +15,26 @@ from dnslib import QTYPE, RR, A, DNSRecord
 FAKE_IP = os.environ.get("FAKE_DNS_IP", "10.0.2.2")
 
 
+REQUEST_LOG = os.environ.get("FAKENET_LOG", "")
+
+
+def _log(query: DNSRecord):
+    """Record the queried hostname - the network evidence an analyst cares
+    about (which C2-ish domains the sample asked DNS for)."""
+    qtype = QTYPE.get(query.q.qtype, query.q.qtype)
+    line = f"[fakenet-dns] {str(query.q.qname).rstrip('.')} (type {qtype})"
+    print(line, flush=True)
+    if REQUEST_LOG:
+        try:
+            with open(REQUEST_LOG, "a") as f:
+                f.write(line + "\n")
+        except OSError:
+            pass
+
+
 def build_reply(raw: bytes) -> bytes:
     request = DNSRecord.parse(raw)
+    _log(request)
     reply = request.reply()
     qname = request.q.qname
     qtype = request.q.qtype

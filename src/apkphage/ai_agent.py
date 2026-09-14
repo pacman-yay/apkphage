@@ -68,11 +68,17 @@ Provide, in this exact structure:
 """
 
 SYNTHESIS_PROMPT = """You are producing a final malware analysis summary for an Android APK sample. \
-Below are per-file findings from static analysis of the decompiled source, plus manifest analysis, plus \
-entropy-flagged assets.
+Below are per-file findings from static analysis of the decompiled source, plus manifest analysis, \
+trust facts (signer/SDK/packer), YARA rule hits, and entropy-flagged assets.
 
 MANIFEST FINDINGS:
 {manifest_findings}
+
+TRUST FACTS (signer cert, SDK levels, packer signatures):
+{trust_facts}
+
+YARA RULE HITS:
+{yara_findings}
 
 ENTROPY-FLAGGED ASSETS (likely encrypted payloads):
 {entropy_findings}
@@ -90,12 +96,18 @@ Respond with ONLY a valid JSON object. No markdown fences, no commentary, no tra
 
 
 def build_synthesis_prompt(
-    manifest_findings: dict, entropy_findings: list, file_findings: list
+    manifest_findings: dict,
+    entropy_findings: list,
+    file_findings: list,
+    trust_facts: dict = None,
+    yara_findings: list = None,
 ) -> str:
     """Formats the synthesis prompt. Findings are dicts/lists, so serialize
     them for readable presentation to the LLM."""
     return SYNTHESIS_PROMPT.format(
         manifest_findings=json.dumps(manifest_findings, indent=2, default=str),
+        trust_facts=json.dumps(trust_facts or {}, indent=2, default=str),
+        yara_findings=json.dumps(yara_findings or [], indent=2, default=str),
         entropy_findings=json.dumps(entropy_findings, indent=2, default=str),
         file_findings=json.dumps(file_findings, indent=2, default=str),
     )

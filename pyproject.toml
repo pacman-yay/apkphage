@@ -1,8 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "apkphage"
 version = "2.0.0"
 description = "Automated Android malware analysis pipeline"
 requires-python = ">=3.11"
+dependencies = [
+    "lxml==5.2.2",
+    "google-genai==2.19.0",
+    "frida-tools>=12.0.0",
+    "questionary>=2.0.0",
+    "rich>=13.0.0",
+    "groq>=0.9.0"
+]
+
+[project.scripts]
+apkphage = "apkphage.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/apkphage"]
+include = [
+    "src/apkphage/Dockerfile*",
+    "src/apkphage/*.sh",
+    "src/apkphage/requirements.txt"
+]
 
 [tool.ruff]
 target-version = "py311"
@@ -28,12 +51,13 @@ ignore = ["S110", "S112", "S605"]
 
 [tool.ruff.lint.per-file-ignores]
 # Legacy scripts and fakenet servers don't need full security/style compliance:
-"example_llm_call.py" = ["S105", "S106"]   # hardcoded passwords (intentional examples)
-"dynamic/fakenet_config/*.py" = ["S104"]   # binding 0.0.0.0 is intentional for fakenet
-"cli.py" = ["S603", "S607", "E402", "E501"]  # subprocess calls with known args; delayed imports; rich markup strings
-"orchestrator.py" = ["S603", "S607"]
-"dynamic/dynamic_runner.py" = ["S603", "S607", "E501"]  # adb/frida subprocess calls with known args; spinner strings
-"ai_agent.py" = ["E501"]  # LLM prompt templates — line length enforced by ruff format only
+"src/apkphage/example_llm_call.py" = ["S105", "S106"]
+"src/apkphage/dynamic/fakenet_config/*.py" = ["S104"]
+"src/apkphage/cli.py" = ["S603", "S607", "E402", "E501"]
+"src/apkphage/orchestrator.py" = ["S603", "S607", "E501"]
+"src/apkphage/dynamic/dynamic_runner.py" = ["S603", "S607", "E501"]
+"src/apkphage/ai_agent.py" = ["E501"]
+"src/apkphage/apk_trust.py" = ["S603", "S607", "E501"]
 
 [tool.ruff.format]
 quote-style = "double"

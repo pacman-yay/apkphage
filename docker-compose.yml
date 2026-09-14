@@ -1,49 +1,29 @@
+# APKPhage — single-command pipeline for everyone.
+#
+# Mirrors run_analysis.sh 1:1 so behavior is identical to the script:
+#   static analyzer  -> apk-analyzer  (built from ./Dockerfile, --network none)
+#   samples          -> ./samples  read-only input
+#   results          -> ./work      read-write output (report.json, captures)
+#   GROQ_API_KEY     -> from the host env (never written into the repo)
+#
+# Usage (as the operator, from a fresh clone):
+#   export GROQ_API_KEY=<your-key>
+#   docker compose up --build
+#   # reports land in ./work/<SampleName>/report.json
+#
+# Stop after the run (it is --rm, so no state is kept):
+#   Ctrl-C   (or: docker compose down)
 services:
-  emulator:
-    # Platform-friendly Android emulator (Linux/macOS/Windows).
-    # Auto-detects /dev/kvm inside the container; falls back to software
-    # emulation when absent, so no KVM is required to boot.
+  apk-analyzer:
     build:
       context: .
-      dockerfile: Dockerfile.sandbox
-    privileged: true
-    # Uncomment on hosts that expose KVM to accelerate boot:
-    # devices:
-    #   - /dev/kvm
-    ports:
-      - "5555:5555"           # ADB
-    environment:
-      - FAKENET_HOST=fakenet
-    depends_on:
-      fakenet:
-        condition: service_started
-    networks:
-      - analysis_net
-
-  fakenet:
-    build: ./dynamic/fakenet_config
-    networks:
-      - analysis_net
-    # This container answers DNS/HTTP/HTTPS with fake responses so the
-    # emulator "sees" a live internet without anything reaching the real one.
-
-  analyzer:
-    build: .
-    depends_on:
-      - emulator
-    environment:
-      - HOST_IP=emulator
-    command: ["python3", "orchestrator.py", "--dynamic"]
+      dockerfile: Dockerfile
+    image: apkphage-analyzer:local
+    container_name: apk-analyzer
+    network_mode: none                 # static only: no network interface at all
     volumes:
-      - ./samples:/app/samples:ro
-      - ./work:/app/work
-    networks:
-      - analysis_net
-    # Note: this service DOES need network access to reach the emulator
-    # and fakenet containers - that's fine, it's all internal to
-    # analysis_net, which itself should have no route to the real internet.
-
-networks:
-  analysis_net:
-    driver: bridge
-    internal: true            # CRITICAL: no route out to the real internet
+      - ./samples:/app/samples:ro      # input, read-only — matches run_analysis.sh
+      - ./work:/app/work               # output — report.json, captures, evidence
+    environment:
+      # Value comes from the host shell on `up`; not stored in this file.
+      - GROQ_API_KEY=${GROQ_API_KEY:-}

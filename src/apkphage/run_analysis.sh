@@ -6,10 +6,10 @@
 #    also fixes stale-image bugs automatically).
 # 2. Runs the static stage container with --network none, APKs read-only.
 # 3. Fixes output ownership (container runs as root).
-# 4. If GEMINI_API_KEY is set, runs the host-side Gemini summarizer.
+# 4. If GROQ_API_KEY is set, runs the host-side Groq summarizer.
 #
 # Usage:
-#   export GEMINI_API_KEY=<your-key>   # optional; enables AI stage
+#   export GROQ_API_KEY=<your-key>   # optional; enables AI stage
 #   ./run_analysis.sh [samples_dir]    # default ./samples
 #
 # Example:
@@ -47,14 +47,14 @@ fi
 echo "[+] Static analysis done:"
 find "$WORK_DIR" -name report.json -print
 
-# Host-side AI stage (Gemini) - automatic when a key is present.
-if [ -n "${GEMINI_API_KEY:-}" ]; then
+# Host-side AI stage (Groq) - automatic when a key is present.
+if [ -n "${GROQ_API_KEY:-}" ]; then
     echo ""
-    echo "[*] GEMINI_API_KEY present - running AI summarization..."
+    echo "[*] GROQ_API_KEY present - running AI summarization..."
     ./run_ai_summaries.sh
 else
     echo ""
-    echo "[*] AI stage skipped (no GEMINI_API_KEY). For Gemini summaries:"
-    echo "    export GEMINI_API_KEY=<your-key>"
+    echo "[*] AI stage skipped (no GROQ_API_KEY). For Groq summaries:"
+    echo "    export GROQ_API_KEY=<your-key>"
     echo "    ./run_analysis.sh ${1:-./samples}"
 fi

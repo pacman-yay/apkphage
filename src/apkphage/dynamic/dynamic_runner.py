@@ -18,6 +18,19 @@ PM_WAIT_TIMEOUT = 180
 _SPIN = "|/-\\"
 _HEARTBEAT_EVERY = 15  # seconds between heartbeat lines in streamed phases
 
+# Lines in frida's output that prove the session NEVER attached (vs a hook
+# that attached but hit a benign in-script error like a missing class).
+_ATTACH_FAILURE_MARKERS = [
+    "Failed to spawn",
+    "Failed to attach",
+    "unexpectedly timed out while waiting",
+    "Unable to find process with pid",
+    "Unable to find process with name",
+    "not found",
+    "Invalid target",
+    "Unable to connect to remote frida-server",
+]
+
 
 def _adb(*args, **kwargs):
     return subprocess.run([ADB] + list(args), capture_output=True, text=True, **kwargs)
@@ -335,52 +348,101 @@ def _get_pid(package_name: str, timeout: float = 120) -> str | None:
     return None
 
 
-def run_frida_hooks(package_name: str, script_path: str, duration_seconds: int = 60):
-    # Frida's spawn mode (-f) has a fixed internal startup timeout that
-    # software emulation routinely busts ("Failed to spawn: unexpectedly
-    # timed out"). Robust path: launch via monkey, then ATTACH by PID -
-    # attaching never competes with app cold-start, so the hook always lands.
-    launch_app(package_name)
-    pid = _get_pid(package_name)
-    if not pid:
-        print("[-] app never spawned a process; attaching anyway (PID lookup failed)", flush=True)
-        attach_target = package_name
-    else:
-        attach_target = pid
-        print(f"[+] {package_name} up (pid {pid}) - attaching Frida...", flush=True)
+def _frida_attach_failed(line: str) -> bool:
+    """True if a frida output line proves the session never attached."""
+    return any(marker.lower() in line.lower() for marker in _ATTACH_FAILURE_MARKERS)
 
-    proc = subprocess.Popen(
-        [
-            "frida",
-            "-U",
-            "-p" if attach_target.isdigit() else "-n",
-            attach_target,
-            "-l",
-            script_path,
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
-    start = time.time()
-    output_lines = []
-    print(f"[+] Attaching frida for {duration_seconds}s...", flush=True)
-    last_beat = start
-    while time.time() - start < duration_seconds:
-        line = proc.stdout.readline()
-        if line:
-            output_lines.append(line)
+
+def run_frida_hooks(
+    package_name: str, script_path: str, duration_seconds: int = 60, max_attempts: int = 3
+) -> dict:
+    """Attach frida by PID (spawn mode is unreliable on software emulation),
+    verifying each attach, retrying on failure, and grading the evidence.
+
+    Returns a dict fit for pipeline_status / report evidence instead of a bare
+    log: the caller can show "attached: true" or "attach failed after N tries"
+    honestly instead of implying a session happened."""
+    all_lines: list[str] = []
+    attached = False
+    quit_marker = False
+
+    for attempt in range(1, max_attempts + 1):
+        print(f"\n[+] Frida attach attempt {attempt}/{max_attempts}...", flush=True)
+        launch_app(package_name)
+        pid = _get_pid(package_name, timeout=60)
+        if pid:
+            attach_target, attach_flag = pid, "-p"
+            print(f"[+] {package_name} up (pid {pid}) - attaching Frida...", flush=True)
+        else:
+            print("[-] app never spawned a process; trying attach by name", flush=True)
+            attach_target, attach_flag = package_name, "-n"
+
+        proc = subprocess.Popen(
+            ["frida", "-U", attach_flag, attach_target, "-l", script_path],
+            stdin=subprocess.DEVNULL,  # never block on a REPL prompt
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        q = queue.Queue()
+
+        def _reader(p=proc, q_ref=q):
+            for line in iter(p.stdout.readline, ""):
+                q_ref.put(line)
+
+        threading.Thread(target=_reader, daemon=True).start()
+
+        start = time.time()
+        attempt_lines = []
+        attempt_ok = True
+        last_beat = start
+        print(f"[+] Attaching frida for {duration_seconds}s...", flush=True)
+
+        while time.time() - start < duration_seconds:
+            try:
+                line = q.get(timeout=1)
+                attempt_lines.append(line)
+                print(line, end="", flush=True)
+                if _frida_attach_failed(line):
+                    # Real frida errors land within seconds; treat as instant fail.
+                    attempt_ok = False
+                    quit_marker = True
+                    break
+                last_beat = time.time()
+            except queue.Empty:
+                if time.time() - last_beat >= 90:
+                    # No output for a while. If the process is still alive, the
+                    # session is holding; keep going (silence is normal for
+                    # hooks that log nothing). If it exited, we lost it.
+                    if proc.poll() is not None:
+                        attempt_ok = False
+                        break
+                    last_beat = time.time()
+        # Drain anything frida printed in the final moments, then stop it.
+        while not q.empty():
+            line = q.get_nowait()
+            attempt_lines.append(line)
             print(line, end="", flush=True)
-            last_beat = time.time()
-        elif time.time() - last_beat >= 1:
-            elapsed = int(time.time() - start)
-            print(
-                "\r" + f"[*] frida session alive... ({elapsed}s) {_SPIN[elapsed % 4]}   ",
-                end="",
-                flush=True,
-            )
-            last_beat = time.time()
-    print("\r", end="")
-    print(f"[+] frida session complete ({int(time.time() - start)}s)", flush=True)
-    proc.terminate()
-    return output_lines
+        if attempt_ok and proc.poll() is None:
+            # Session survived the full window and never said it failed.
+            attached = True
+        else:
+            # If break happened mid-drain, terminate cleanly before retrying.
+            print("[-] attach did not confirm; retrying...", flush=True)
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        all_lines.extend(attempt_lines)
+        if attached:
+            break
+
+    result = {
+        "attached": attached,
+        "attempts": attempt,
+        "quit_marker": quit_marker,
+        "output_lines": len(all_lines),
+        "log": all_lines,
+    }
+    return result

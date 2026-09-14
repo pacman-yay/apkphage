@@ -14,7 +14,7 @@ import threading
 import time
 from contextlib import contextmanager
 
-STATIC_PHASES = ["apktool", "jadx", "manifest", "assets", "triage", "stage"]
+STATIC_PHASES = ["apktool", "jadx", "manifest", "assets", "trust", "yara", "triage", "stage"]
 DYNAMIC_PHASES = ["emulator", "install", "frida"]
 
 

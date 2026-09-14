@@ -18,6 +18,9 @@ python3 /app/fake_dns.py &
 
 # Fake HTTP/HTTPS + proxy responder
 echo "[*] Starting fake web responder on 80, 443, 8080..."
+if [ -n "${FAKENET_LOG:-}" ]; then
+  : > "${FAKENET_LOG}"
+fi
 python3 /app/fake_internet.py &
 
 trap 'echo "[*] Shutting down fakenet."; kill 0' EXIT

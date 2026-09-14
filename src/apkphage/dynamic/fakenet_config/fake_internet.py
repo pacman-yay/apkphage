@@ -10,6 +10,7 @@ request line. DNS NXDOMAIN/redirect is handled separately by dnschef.
 """
 
 import http.server
+import os
 import socketserver
 import ssl
 import sys
@@ -21,21 +22,34 @@ FAKE_BODY = b"""<!doctype html><html><head><title>404 - Honeypot Sanitized</titl
 <p>No real internet is reachable from this sandbox. This response is synthetic.</p>
 </body></html>"""
 
+# Optional request log file (mounted work dir) so the host can harvest every
+# endpoint the sample touched without parsing docker logs.
+REQUEST_LOG = os.environ.get("FAKENET_LOG", "")
+
+
+def _write_log_line(line: str):
+    sys.stdout.write(line)
+    sys.stdout.flush()
+    if REQUEST_LOG:
+        try:
+            with open(REQUEST_LOG, "a") as f:
+                f.write(line)
+        except OSError:
+            pass
+
 
 class FakeHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
         # quieter: only request lines we care about
-        sys.stdout.write("[fakenet] %s\n" % (fmt % args))
-        sys.stdout.flush()
+        _write_log_line("[fakenet] %s\n" % (fmt % args))
 
     def _respond(self):
         # Endpoint is recorded in access log via log_request/self.path already.
 
         # Proxy-style absolute URI and plain path both fine.
-        sys.stdout.write(f"[fakenet] {self.command} {self.path}\n")
-        sys.stdout.flush()
+        _write_log_line(f"[fakenet] {self.command} {self.path}\n")
 
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -59,8 +73,7 @@ class FakeHandler(http.server.BaseHTTPRequestHandler):
 
     def do_CONNECT(self):
         # A real proxy would tunnel; we just swallow the TLS handshake bytes.
-        sys.stdout.write(f"[fakenet] CONNECT {self.path}\n")
-        sys.stdout.flush()
+        _write_log_line(f"[fakenet] CONNECT {self.path}\n")
         self.send_response(200, "Connection established")
         self.end_headers()
         # Do not actually tunnel anywhere - keep socket open briefly, ignore bytes.

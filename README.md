@@ -9,7 +9,7 @@ suspicious patterns. Outputs a JSON report per sample.
 container runs with `--network none`, so it never calls an LLM API — it stages
 the flagged-file prompts to `work/<Sample>/llm_stage.json`. You then run
 `./run_ai_summaries.sh` on the VM host (which has internet) to summarize via
-Gemini and merge a structured `final_synthesis` into `report.json`.
+Groq and merge a structured `final_synthesis` into `report.json`.
 
 ## Build
 
@@ -39,7 +39,7 @@ docker run --rm \
 ```
 
 Or use the wrapper (builds on first run, accepts a samples dir, runs the AI
-stage automatically when `GEMINI_API_KEY` is set):
+stage automatically when `GROQ_API_KEY` is set):
 
 ```bash
 ./run_analysis.sh samples1
@@ -55,11 +55,11 @@ stage automatically when `GEMINI_API_KEY` is set):
 Intended use: on a disposable/isolated host (e.g. a VM) — this container runs
 malware analysis tooling and should not live on a machine that matters to you.
 
-## AI stage (host-side Gemini)
+## AI stage (host-side Groq)
 
 ```bash
-pip install google-genai
-export GEMINI_API_KEY=<your-key>
+pip install groq
+export GROQ_API_KEY=<your-key>
 ./run_ai_summaries.sh                      # uses first llm_stage.json under ./work/
 ```
 

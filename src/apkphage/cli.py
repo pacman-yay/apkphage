@@ -98,17 +98,12 @@ def print_banner():
     report_count = len(reports)
     pending_count = len(stages) - report_count
 
-    provider = os.environ.get("LLM_PROVIDER", "")
-    gemini_key = bool(os.environ.get("GEMINI_API_KEY"))
+    provider = os.environ.get("LLM_PROVIDER", "groq")
     groq_key = bool(os.environ.get("GROQ_API_KEY"))
     if provider == "groq" or groq_key:
         ai_status = "[green]Groq configured[/green]"
-    elif provider == "gemini" or gemini_key:
-        ai_status = (
-            "[green]Gemini configured[/green]"
-            if gemini_key
-            else "[yellow]Gemini key missing[/yellow]"
-        )
+    elif groq_key:
+        ai_status = "[yellow]Groq key missing[/yellow]"
     else:
         ai_status = "[yellow]No AI key[/yellow]"
 
@@ -121,13 +116,13 @@ def print_banner():
 
     pending_str = f"  [yellow]({pending_count} pending AI)[/yellow]" if pending_count > 0 else ""
 
-    banner = f"""[bold blue]APKPhage v2.0.0[/bold blue]
+    banner = f"""[bold blue]APKPhage v3.0.0[/bold blue]
 [bold white]Automated Android Malware Analysis Pipeline[/bold white]
 
   [cyan]Samples:[/cyan] {sample_count} APK  [dim]|[/dim]  [cyan]Reports:[/cyan] {report_count}{pending_str}  [dim]|[/dim]  [cyan]AI:[/cyan] {ai_status}  [dim]|[/dim]  [cyan]Docker:[/cyan] {docker_status}
 
-  [dim white]{platform.system()}/{platform.machine()}[/dim white]  [dim]|[/dim]  [dim white]Stack: Docker, Apktool, Jadx, Frida, KVM/Swiftshader[/dim white]
-  [dim blue]Static: container (--network none)  |  Dynamic: Redroid + Frida  |  AI: host-side Gemini/Groq[/dim blue]"""
+  [dim white]{platform.system()}/{platform.machine()}[/dim white]  [dim]|[/dim]  [dim white]Stack: Docker, Apktool, Jadx, Frida, Android Emulator (software)[/dim white]
+  [bold blue]Static: container (--network none)  |  Dynamic: Android Emulator (software) + Frida  |  AI: host-side Groq[/bold blue]"""
 
     console.print(Panel(banner, border_style="blue", padding=(1, 2), expand=False))
 
@@ -149,18 +144,10 @@ load_env()
 
 
 def get_or_prompt_api_key():
-    provider = os.environ.get("LLM_PROVIDER")
-    if not provider:
-        provider = questionary.select(
-            "Which AI provider would you like to use?", choices=["groq", "gemini"]
-        ).ask()
-        if not provider:
-            return False
-        os.environ["LLM_PROVIDER"] = provider
-        with open(ENV_FILE, "a") as f:
-            f.write(f"LLM_PROVIDER={provider}\n")
+    provider = os.environ.get("LLM_PROVIDER", "groq")
+    os.environ["LLM_PROVIDER"] = provider
 
-    key_name = "GROQ_API_KEY" if provider == "groq" else "GEMINI_API_KEY"
+    key_name = "GROQ_API_KEY"
 
     if not os.environ.get(key_name):
         api_key = questionary.password(
@@ -262,9 +249,8 @@ def run_static_analysis():
 
         # Auto-run AI if key is present or user accepts
         if (
-            os.environ.get("GEMINI_API_KEY")
-            or os.environ.get("GROQ_API_KEY")
-            or os.environ.get("LLM_PROVIDER")
+            os.environ.get("GROQ_API_KEY")
+            or os.environ.get("LLM_PROVIDER") == "groq"
             or questionary.confirm("Do you want to automatically run the AI summarizer now?").ask()
         ):
             if get_or_prompt_api_key():
@@ -275,7 +261,7 @@ def run_static_analysis():
                         f"[bold white][*] Auto-running AI Summarizer for {rel_stage}...[/bold white]"
                     )
                     try:
-                        import ai_summarizer
+                        from apkphage import ai_summarizer
 
                         with console.status(
                             f"[bold white]Summarizing {rel_stage}...[/bold white]", spinner="dots"
@@ -338,7 +324,7 @@ def generate_ai_report():
     stage_path = os.path.join(WORK_DIR, selected)
 
     try:
-        import ai_summarizer
+        from apkphage import ai_summarizer
 
         with console.status(
             f"[bold white]Running AI Summarizer for {selected}...[/bold white]", spinner="dots"
@@ -581,13 +567,13 @@ def _run_analyzer_live(cmd, cwd):
         refresh_per_second=4,
         vertical_overflow="visible",
     ) as live:
-        _stream_sandbox_logs(live.console)
+        _stream_sandbox_logs(console)
         last_key = None
         while proc.poll() is None:
             try:
                 line = q.get(timeout=1)
                 for part in _stream_normalize(line):
-                    live.console.print(part, highlight=False)
+                    console.print(part, highlight=False)
             except queue.Empty:
                 status = _pipeline_status()
                 key = json.dumps(status) if status else None
@@ -600,7 +586,7 @@ def _run_analyzer_live(cmd, cwd):
 
 
 def _ensure_fakenet_image() -> str:
-    """Build apkphage-fakenet from dynamic/fakenet_config lazily."""
+    """Build apkphage-fakenet from apkphage.dynamic/fakenet_config lazily."""
     if (
         subprocess.run(
             ["docker", "image", "inspect", "apkphage-fakenet"], capture_output=True
@@ -712,6 +698,10 @@ def run_dynamic_analysis():
                         "apkphage-fakenet",
                         "--network",
                         "apkphage-net",
+                        "-v",
+                        f"{WORK_DIR}:/app/work",
+                        "-e",
+                        "FAKENET_LOG=/app/work/fakenet_requests.log",
                         fakenet_image,
                     ],
                     check=True,
@@ -743,6 +733,10 @@ def run_dynamic_analysis():
                 "--privileged",
                 "--network",
                 "apkphage-net",
+                "-v",
+                f"{WORK_DIR}:/app/work",
+                "-e",
+                "CAPTURE_NET=1",
             ]
             + fakenet_env
             + sandbox_extra
@@ -798,11 +792,7 @@ def run_dynamic_analysis():
                 pass
 
         # Auto-run AI if key is present
-        if (
-            os.environ.get("GEMINI_API_KEY")
-            or os.environ.get("GROQ_API_KEY")
-            or os.environ.get("LLM_PROVIDER")
-        ):
+        if os.environ.get("GROQ_API_KEY") or os.environ.get("LLM_PROVIDER") == "groq":
             if get_or_prompt_api_key():
                 stages = glob.glob(os.path.join(WORK_DIR, "*", "llm_stage.json"))
                 for stage in stages:
@@ -810,7 +800,7 @@ def run_dynamic_analysis():
                     console.print(
                         f"[bold white][*] Auto-running AI Summarizer for {rel_stage}...[/bold white]"
                     )
-                    import ai_summarizer
+                    from apkphage import ai_summarizer
 
                     try:
                         ai_summarizer.summarize_stage(stage)
@@ -824,10 +814,25 @@ def run_dynamic_analysis():
         if e.stderr:
             console.print(f"[dim red]{e.stderr.decode('utf-8', errors='ignore')}[/dim red]")
     finally:
-        console.print("[bold white][*] Destroying sandbox and network...[/bold white]")
-        subprocess.run(["docker", "stop", "apkphage-sandbox"], capture_output=True)
-        subprocess.run(["docker", "stop", "apkphage-fakenet"], capture_output=True)
-        subprocess.run(["docker", "network", "rm", "apkphage-net"], capture_output=True)
+        # Keep-sandbox-alive mode: leave the emulator + fakenet + network up so
+        # the analyst can interact (adb shell, install other tools, retry hooks)
+        # without waiting another ~11min software-emulation boot.
+        keep = os.environ.get("APKPHAGE_KEEP_SANDBOX") == "1"
+        if keep:
+            console.print(
+                "[bold yellow][*] APKPHAGE_KEEP_SANDBOX=1 - leaving sandbox running.[/bold yellow]"
+            )
+            console.print("    The sandbox stays on the apkphage-net network.")
+            console.print("    Interact via Docker:  docker exec -it apkphage-sandbox sh")
+            console.print(
+                "    Tear down:  docker stop apkphage-sandbox apkphage-fakenet; "
+                "docker network rm apkphage-net"
+            )
+        else:
+            console.print("[bold white][*] Destroying sandbox and network...[/bold white]")
+            subprocess.run(["docker", "stop", "apkphage-sandbox"], capture_output=True)
+            subprocess.run(["docker", "stop", "apkphage-fakenet"], capture_output=True)
+            subprocess.run(["docker", "network", "rm", "apkphage-net"], capture_output=True)
 
 
 def main():

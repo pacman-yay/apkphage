@@ -8,11 +8,15 @@ def build_report(
     entropy_findings: list,
     per_file_summaries: list,
     final_synthesis: str,
+    trust_facts: dict = None,
+    yara_findings: list = None,
 ) -> dict:
     return {
         "sample": sample_name,
         "analyzed_at": datetime.now(UTC).isoformat(),
         "manifest_findings": manifest_findings,
+        "trust_facts": trust_facts or {},
+        "yara_findings": yara_findings or [],
         "entropy_flagged_assets": entropy_findings,
         "per_file_ai_summaries": per_file_summaries,
         "final_synthesis": final_synthesis,

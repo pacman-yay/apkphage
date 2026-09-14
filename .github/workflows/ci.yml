@@ -1,0 +1,22 @@
+name: ci
+
+# Gate for a docker-distributed tool: prove the shared artifacts are sound so a
+# fresh clone builds identically. Runs on every push and PR.
+on:
+  push:
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: python compile gate
+        run: python -m compileall -q cli.py ai_summarizer.py progress.py orchestrator.py example_llm_call.py
+      - name: compose gate
+        run: docker compose config
+      - name: docker build gate
+        # Static analyzer only. Deliberately NOT the emulator/sandbox image:
+        # it is ~7GB and needs KVM, which GitHub runners do not have.
+        run: docker build -f Dockerfile -t apk-analyzer:ci .
