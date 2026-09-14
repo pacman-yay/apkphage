@@ -57,7 +57,7 @@ If you want to modify the code, add custom Frida hooks, or develop new features:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/apkphage.git
+git clone https://github.com/pacman-yay/apkphage.git
 cd apkphage
 
 # 2. Setup your virtual environment
