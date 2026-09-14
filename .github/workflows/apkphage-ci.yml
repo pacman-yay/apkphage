@@ -151,21 +151,21 @@ jobs:
       - name: Lint all Dockerfiles
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: "Dockerfile"
+          dockerfile: "src/apkphage/Dockerfile"
           config: .hadolint.yaml
         continue-on-error: true  # Warn but don't block
 
       - name: Lint Dockerfile.sandbox
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: "Dockerfile.sandbox"
+          dockerfile: "src/apkphage/Dockerfile.sandbox"
           config: .hadolint.yaml
         continue-on-error: true
 
       - name: Lint fakenet Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: "dynamic/fakenet_config/Dockerfile"
+          dockerfile: "src/apkphage/dynamic/fakenet_config/Dockerfile"
           config: .hadolint.yaml
         continue-on-error: true
 
@@ -182,16 +182,16 @@ jobs:
     strategy:
       matrix:
         image:
-          - { name: "apk-analyzer", file: "Dockerfile" }
-          - { name: "apkphage-emulator", file: "Dockerfile.sandbox" }
-          - { name: "apkphage-fakenet", file: "dynamic/fakenet_config/Dockerfile" }
+          - { name: "apk-analyzer", file: "src/apkphage/Dockerfile", context: "src/apkphage" }
+          - { name: "apkphage-emulator", file: "src/apkphage/Dockerfile.sandbox", context: "src/apkphage" }
+          - { name: "apkphage-fakenet", file: "src/apkphage/dynamic/fakenet_config/Dockerfile", context: "src/apkphage/dynamic/fakenet_config" }
     steps:
       - uses: actions/checkout@v4
 
       - name: Build ${{ matrix.image.name }}
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ matrix.image.context }}
           file: ${{ matrix.image.file }}
           push: false
           tags: ${{ matrix.image.name }}:ci-${{ github.sha }}
@@ -214,16 +214,16 @@ jobs:
     strategy:
       matrix:
         image:
-          - { name: "apk-analyzer", file: "Dockerfile" }
-          - { name: "apkphage-emulator", file: "Dockerfile.sandbox" }
-          - { name: "apkphage-fakenet", file: "dynamic/fakenet_config/Dockerfile" }
+          - { name: "apk-analyzer", file: "src/apkphage/Dockerfile", context: "src/apkphage" }
+          - { name: "apkphage-emulator", file: "src/apkphage/Dockerfile.sandbox", context: "src/apkphage" }
+          - { name: "apkphage-fakenet", file: "src/apkphage/dynamic/fakenet_config/Dockerfile", context: "src/apkphage/dynamic/fakenet_config" }
     steps:
       - uses: actions/checkout@v4
 
       - name: Build image for scanning
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ${{ matrix.image.context }}
           file: ${{ matrix.image.file }}
           push: false
           load: true
@@ -276,7 +276,7 @@ jobs:
         run: pip install pip-audit==2.10.1
 
       - name: Audit Python dependencies
-        run: pip-audit -r requirements.txt --desc on
+        run: pip-audit -r src/apkphage/requirements.txt --desc on
 
       - name: Audit dev dependencies
         run: pip-audit -r dev-requirements.txt --desc on

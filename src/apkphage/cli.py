@@ -8,8 +8,8 @@ import threading
 
 
 def bootstrap():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    venv_dir = os.path.join(base_dir, ".venv")
+    package_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_dir = os.path.join(package_dir, ".venv")
 
     if sys.platform == "win32":
         python_exe = os.path.join(venv_dir, "Scripts", "python.exe")
@@ -81,9 +81,10 @@ SPINNERS["cyber_loader"] = {
 }
 
 console = Console()
-base_dir = os.path.dirname(os.path.abspath(__file__))
-SAMPLES_DIR = os.path.join(base_dir, "samples")
-WORK_DIR = os.path.join(base_dir, "work")
+package_dir = os.path.dirname(os.path.abspath(__file__))
+cwd = os.getcwd()
+SAMPLES_DIR = os.path.join(cwd, "samples")
+WORK_DIR = os.path.join(cwd, "work")
 
 
 def print_banner():
@@ -127,7 +128,7 @@ def print_banner():
     console.print(Panel(banner, border_style="blue", padding=(1, 2), expand=False))
 
 
-ENV_FILE = os.path.join(base_dir, ".env")
+ENV_FILE = os.path.join(package_dir, ".env")
 
 
 def load_env():
@@ -201,7 +202,7 @@ def run_static_analysis():
         ):
             subprocess.run(
                 ["docker", "build", "-t", "apk-analyzer", "."],
-                cwd=base_dir,
+                cwd=package_dir,
                 check=True,
                 capture_output=True,
             )
@@ -233,7 +234,7 @@ def run_static_analysis():
         "apk-analyzer",
     ]
     try:
-        _run_analyzer_live(cmd, base_dir)
+        _run_analyzer_live(cmd, package_dir)
         console.print("[bold green][+] Static analysis complete.[/bold green]")
 
         # Fix file ownership since Docker runs as root
@@ -403,7 +404,7 @@ def _ensure_emulator_image() -> str:
         == 0
     ):
         return "apkphage-emulator"
-    dockerfile = os.path.join(base_dir, "Dockerfile.sandbox")
+    dockerfile = os.path.join(package_dir, "Dockerfile.sandbox")
     if not os.path.exists(dockerfile):
         console.print(
             "[bold red]Dockerfile.sandbox not found - cannot build the emulator sandbox.[/bold red]"
@@ -415,7 +416,7 @@ def _ensure_emulator_image() -> str:
     try:
         subprocess.run(
             ["docker", "build", "-t", "apkphage-emulator", "-f", "Dockerfile.sandbox", "."],
-            cwd=base_dir,
+            cwd=package_dir,
             check=True,
         )
     except subprocess.CalledProcessError:
@@ -594,7 +595,7 @@ def _ensure_fakenet_image() -> str:
         == 0
     ):
         return "apkphage-fakenet"
-    fakenet_dir = os.path.join(base_dir, "dynamic", "fakenet_config")
+    fakenet_dir = os.path.join(package_dir, "dynamic", "fakenet_config")
     if not os.path.exists(os.path.join(fakenet_dir, "Dockerfile")):
         console.print(
             "[bold yellow][!] dynamic/fakenet_config/Dockerfile missing - running sandbox WITHOUT fake internet.[/bold yellow]"
@@ -633,7 +634,7 @@ def run_dynamic_analysis():
         ):
             subprocess.run(
                 ["docker", "build", "-t", "apk-analyzer", "."],
-                cwd=base_dir,
+                cwd=package_dir,
                 check=True,
                 capture_output=True,
             )
@@ -777,7 +778,7 @@ def run_dynamic_analysis():
         console.print(
             "[bold white]Starting Full Analysis Pipeline (Static -> Emulation -> Frida)...[/bold white]"
         )
-        _run_analyzer_live(cmd, base_dir)
+        _run_analyzer_live(cmd, package_dir)
         console.print("[bold green][+] Analysis complete. Logs saved in work/[/bold green]")
 
         # Fix file ownership
@@ -836,7 +837,7 @@ def run_dynamic_analysis():
 
 
 def main():
-    os.chdir(base_dir)
+    os.chdir(package_dir)
 
     style = questionary.Style(
         [

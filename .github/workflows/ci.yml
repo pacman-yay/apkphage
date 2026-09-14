@@ -13,10 +13,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: python compile gate
-        run: python -m compileall -q cli.py ai_summarizer.py progress.py orchestrator.py example_llm_call.py
+        run: python -m compileall -q src/apkphage/
       - name: compose gate
         run: docker compose config
       - name: docker build gate
         # Static analyzer only. Deliberately NOT the emulator/sandbox image:
         # it is ~7GB and needs KVM, which GitHub runners do not have.
-        run: docker build -f Dockerfile -t apk-analyzer:ci .
+        run: docker build -f src/apkphage/Dockerfile -t apk-analyzer:ci src/apkphage/

@@ -16,7 +16,7 @@
 services:
   apk-analyzer:
     build:
-      context: .
+      context: src/apkphage
       dockerfile: Dockerfile
     image: apkphage-analyzer:local
     container_name: apk-analyzer
