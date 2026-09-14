@@ -47,10 +47,11 @@ jobs:
         run: |
           mkdir release_bundle
           cp dist/apkphage release_bundle/
-          cp Dockerfile release_bundle/
-          cp Dockerfile.sandbox release_bundle/
-          cp sandbox_start.sh release_bundle/
-          cp -r dynamic release_bundle/
+          cp src/apkphage/Dockerfile release_bundle/
+          cp src/apkphage/Dockerfile.sandbox release_bundle/
+          cp src/apkphage/sandbox_start.sh release_bundle/
+          cp -r src/apkphage/dynamic release_bundle/
+          cp -r src/apkphage/rules release_bundle/
           cd release_bundle
           zip -r ../${{ matrix.zip_name }} .
 
@@ -59,10 +60,11 @@ jobs:
         run: |
           mkdir release_bundle
           copy dist\apkphage.exe release_bundle\
-          copy Dockerfile release_bundle\
-          copy Dockerfile.sandbox release_bundle\
-          copy sandbox_start.sh release_bundle\
-          xcopy dynamic release_bundle\dynamic\ /E /I
+          copy src\apkphage\Dockerfile release_bundle\
+          copy src\apkphage\Dockerfile.sandbox release_bundle\
+          copy src\apkphage\sandbox_start.sh release_bundle\
+          xcopy src\apkphage\dynamic release_bundle\dynamic\ /E /I
+          xcopy src\apkphage\rules release_bundle\rules\ /E /I
           Compress-Archive -Path release_bundle\* -DestinationPath ${{ matrix.zip_name }}
 
       - name: Upload Release Asset

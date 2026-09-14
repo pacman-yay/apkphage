@@ -24,7 +24,8 @@ packages = ["src/apkphage"]
 include = [
     "src/apkphage/Dockerfile*",
     "src/apkphage/*.sh",
-    "src/apkphage/requirements.txt"
+    "src/apkphage/requirements.txt",
+    "src/apkphage/rules/*"
 ]
 
 [tool.ruff]
