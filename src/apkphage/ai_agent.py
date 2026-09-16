@@ -83,6 +83,9 @@ YARA RULE HITS:
 ENTROPY-FLAGGED ASSETS (likely encrypted payloads):
 {entropy_findings}
 
+DYNAMIC EVIDENCE (Frida hooks, Network captures, Mitmproxy intercepted traffic):
+{dynamic_evidence}
+
 PER-FILE CODE FINDINGS:
 {file_findings}
 
@@ -101,6 +104,7 @@ def build_synthesis_prompt(
     file_findings: list,
     trust_facts: dict = None,
     yara_findings: list = None,
+    dynamic_evidence: dict = None,
 ) -> str:
     """Formats the synthesis prompt. Findings are dicts/lists, so serialize
     them for readable presentation to the LLM."""
@@ -108,7 +112,8 @@ def build_synthesis_prompt(
         manifest_findings=json.dumps(manifest_findings, indent=2, default=str),
         trust_facts=json.dumps(trust_facts or {}, indent=2, default=str),
         yara_findings=json.dumps(yara_findings or [], indent=2, default=str),
-        entropy_findings=json.dumps(entropy_findings, indent=2, default=str),
+        entropy_findings=json.dumps(entropy_findings or [], indent=2, default=str),
+        dynamic_evidence=json.dumps(dynamic_evidence or {}, indent=2, default=str),
         file_findings=json.dumps(file_findings, indent=2, default=str),
     )
 

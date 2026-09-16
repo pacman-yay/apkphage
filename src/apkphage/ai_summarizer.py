@@ -71,8 +71,9 @@ def summarize_stage(stage_path: str):
         stage["manifest_findings"],
         stage.get("entropy_findings", []),
         per_file_summaries,
-        stage.get("trust_facts", {}),
-        stage.get("yara_findings", []),
+        trust_facts=stage.get("trust_facts", {}),
+        yara_findings=stage.get("yara_findings", []),
+        dynamic_evidence=stage.get("dynamic_evidence", {}),
     )
     try:
         raw = call_llm(prompt)

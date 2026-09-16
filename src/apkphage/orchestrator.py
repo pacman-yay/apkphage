@@ -220,11 +220,25 @@ def run_dynamic_stage(apk_path: str, manifest_findings: dict, sample_work_dir: s
 
     package_name = get_package_name(manifest_findings)
 
-    print(f"[+] Launching {package_name} and attaching Frida hooks...")
+    print(f"[+] Launching {package_name} and attaching Frida hooks (including SSL Unpinning)...")
+
+    # Combine standard hooks with SSL unpinning
+    combined_script = os.path.join(sample_work_dir, "combined_hooks.js")
+    try:
+        with (
+            open("/app/dynamic/frida_hooks.js") as f1,
+            open("/app/dynamic/ssl_unpinning.js") as f2,
+            open(combined_script, "w") as out,
+        ):
+            out.write(f1.read() + "\n" + f2.read())
+    except FileNotFoundError:
+        # Fallback if ssl_unpinning is missing during testing
+        combined_script = "/app/dynamic/frida_hooks.js"
+
     with pipe.phase("frida"):
         frida_result = run_frida_hooks(
             package_name,
-            "/app/dynamic/frida_hooks.js",
+            combined_script,
             duration_seconds=180,
         )
 
@@ -261,6 +275,16 @@ def run_dynamic_stage(apk_path: str, manifest_findings: dict, sample_work_dir: s
         except OSError:
             pass
 
+    # Harvest Mitmproxy traffic JSON
+    traffic_json = os.path.join(WORK_DIR, "traffic.json")
+    if os.path.exists(traffic_json):
+        flat = os.path.join(sample_work_dir, "mitm_traffic.json")
+        try:
+            os.replace(traffic_json, flat)
+            print(f"[+] Mitmproxy traffic log saved to {flat}")
+        except OSError:
+            pass
+
     evidence = {
         "frida": {
             "attached": frida_result["attached"],
@@ -274,6 +298,9 @@ def run_dynamic_stage(apk_path: str, manifest_findings: dict, sample_work_dir: s
         else None,
         "fakenet_requests": "fakenet_requests.log"
         if os.path.exists(os.path.join(sample_work_dir, "fakenet_requests.log"))
+        else None,
+        "mitm_traffic": "mitm_traffic.json"
+        if os.path.exists(os.path.join(sample_work_dir, "mitm_traffic.json"))
         else None,
     }
     evidence_path = os.path.join(sample_work_dir, "dynamic_evidence.json")

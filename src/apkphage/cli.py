@@ -626,6 +626,23 @@ def run_dynamic_analysis():
         )
         return
 
+    network_mode = questionary.select(
+        "How would you like to handle malware network traffic?",
+        choices=[
+            questionary.Choice(
+                "Air-gapped Fakenet (Maximum Security, Local Sinkhole)", value="fakenet"
+            ),
+            questionary.Choice(
+                "Tor Network Proxy (Fetch real payloads, mask host IP)", value="tor"
+            ),
+        ],
+        qmark="?",
+        pointer="❯",
+    ).ask()
+
+    if not network_mode:
+        return
+
     # Build Analyzer Image
     try:
         with console.status(
@@ -672,6 +689,8 @@ def run_dynamic_analysis():
     subprocess.run(["docker", "rm", "-f", "apkphage-sandbox"], capture_output=True)
     subprocess.run(["docker", "rm", "-f", "apk-analyzer-dynamic"], capture_output=True)
     subprocess.run(["docker", "rm", "-f", "apkphage-fakenet"], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", "apkphage-mitmproxy"], capture_output=True)
+    subprocess.run(["docker", "rm", "-f", "apkphage-tor"], capture_output=True)
 
     # Ensure clean network state
     subprocess.run(["docker", "network", "rm", "apkphage-net"], capture_output=True)
@@ -721,6 +740,67 @@ def run_dynamic_analysis():
                         f"[dim yellow]{e.stderr.decode('utf-8', errors='ignore')}[/dim yellow]"
                     )
 
+    # Start Tor and Mitmproxy
+    if network_mode == "tor":
+        try:
+            subprocess.run(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--rm",
+                    "--name",
+                    "apkphage-tor",
+                    "--network",
+                    "apkphage-net",
+                    "peterdavehello/tor-socks-proxy:latest",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            console.print(
+                "[bold green]  + Tor proxy online (masking outbound traffic).[/bold green]"
+            )
+        except subprocess.CalledProcessError:
+            console.print("[bold red]Failed to start Tor container.[/bold red]")
+
+    try:
+        mitm_cmd = [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            "apkphage-mitmproxy",
+            "--network",
+            "apkphage-net",
+            "-v",
+            f"{package_dir}/dynamic/mitm_addon.py:/app/mitm_addon.py:ro",
+            "-v",
+            f"{WORK_DIR}:/work",
+            "-e",
+            f"NETWORK_MODE={network_mode}",
+            "mitmproxy/mitmproxy",
+            "mitmdump",
+            "-s",
+            "/app/mitm_addon.py",
+            "--set",
+            "ssl_insecure=true",
+        ]
+        if network_mode == "tor":
+            mitm_cmd.extend(["--mode", "regular", "--upstream-proxy", "socks5://apkphage-tor:9150"])
+        elif network_mode == "fakenet":
+            mitm_cmd.extend(
+                ["--mode", "regular", "--upstream-proxy", "http://apkphage-fakenet:8080"]
+            )
+
+        subprocess.run(mitm_cmd, check=True, capture_output=True)
+        console.print("[bold green]  + Mitmproxy online (intercepting SSL traffic).[/bold green]")
+    except subprocess.CalledProcessError as e:
+        console.print("[bold red]Failed to start Mitmproxy.[/bold red]")
+        if e.stderr:
+            console.print(f"[dim red]{e.stderr.decode('utf-8', errors='ignore')}[/dim red]")
+
     # Start Sandbox
     try:
         subprocess.run(
@@ -767,6 +847,8 @@ def run_dynamic_analysis():
             "apkphage-net",
             "-e",
             "HOST_IP=apkphage-sandbox",
+            "-e",
+            "MITM_PROXY_IP=apkphage-mitmproxy",
             "-v",
             f"{SAMPLES_DIR}:/app/samples:ro",
             "-v",

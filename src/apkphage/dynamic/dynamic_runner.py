@@ -247,6 +247,15 @@ def wait_for_device():
     )
     time.sleep(2)  # Give it time to bind to port
 
+    # Configure Global HTTP Proxy if mitmproxy is enabled
+    proxy_ip = os.environ.get("MITM_PROXY_IP")
+    if proxy_ip:
+        print(f"[+] Setting Global HTTP Proxy to {proxy_ip}:8080...", flush=True)
+        subprocess.run(
+            [ADB, "shell", "settings", "put", "global", "http_proxy", f"{proxy_ip}:8080"],
+            check=False,
+        )
+
 
 def _wait_package_manager(timeout: float = PM_WAIT_TIMEOUT) -> bool:
     """Wait until the package manager (system_server) is actually responsive.
