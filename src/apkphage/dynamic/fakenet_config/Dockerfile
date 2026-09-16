@@ -13,8 +13,9 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel msgpack \
+    && pip install --no-cache-dir -r requirements.txt \
+    && rm -rf /usr/local/lib/python*/ensurepip/_bundled/*.whl
 
 COPY fake_dns.py .
 COPY fake_internet.py .
